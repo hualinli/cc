@@ -72,6 +72,41 @@ func main() {
 		}
 	}
 
+	// 细粒度 API
+	// 注意：所有 API 均需鉴权, 但调试期间暂时开放
+
+	developAPI := r.Group("/dev-api/v1")
+	{
+		// 1. Node API 的增删改查
+		developAPI.GET("/nodes/:id", handlers.GetNodes)
+		developAPI.POST("/nodes", handlers.CreateNode)
+		developAPI.DELETE("/nodes/:id", handlers.DeleteNode)
+		developAPI.PUT("/nodes/:id", handlers.UpdateNode)
+		developAPI.GET("/nodes", handlers.ListNodes)
+
+		// 2. Room API 的增删改查
+		developAPI.GET("/rooms", handlers.GetRooms)
+		developAPI.POST("/rooms", handlers.CreateRoom)
+		developAPI.DELETE("/rooms/:id", handlers.DeleteRoom)
+		developAPI.PUT("/rooms/:id", handlers.UpdateRoom)
+
+		// 3. Exam API 的增删改查
+		developAPI.GET("/exams", handlers.GetExams)
+		developAPI.POST("/exams", handlers.CreateExam)
+		developAPI.DELETE("/exams/:id", handlers.DeleteExam)
+		developAPI.PUT("/exams/:id", handlers.UpdateExam)
+
+		// 4. Alert API 的增删改查
+		developAPI.GET("/alerts", handlers.GetAlerts)
+		developAPI.POST("/alerts", handlers.CreateAlert)
+		developAPI.DELETE("/alerts/:id", handlers.DeleteAlert)
+		developAPI.PUT("/alerts/:id", handlers.UpdateAlert)
+	}
+
+	// 业务 API
+	// 注意：所有 API 均需鉴权，但调试期间暂时开放
+	// TODO
+
 	// API 路由
 	api := r.Group("/api")
 	api.Use(middleware.AuthMiddleware())

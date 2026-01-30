@@ -21,37 +21,28 @@ func generateToken() string {
 }
 
 // 明确的返回结构，确保 JSON 序列化时字段持平且名称一致
-type NodeResp struct {
-	ID              uint      `json:"id"`
-	Name            string    `json:"name"`
-	Model           string    `json:"model"`
-	Address         string    `json:"address"`
-	Status          string    `json:"status"`
-	Version         string    `json:"version"`
-	CurrentUserID   *uint     `json:"current_user_id"`
-	LastHeartbeatAt time.Time `json:"last_heartbeat_at"`
-	IsAssignedToMe  bool      `json:"is_assigned_to_me"`
-}
+// 已移除，使用 models.Node 直接返回
 
-func GetNodes(c *gin.Context) {
+func ListNodes(c *gin.Context) {
 	session := sessions.Default(c)
-	role := session.Get("role")
 	userIDVal := session.Get("user_id")
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "user_id 类型错误"})
+		return
+	}
 
-	var userID uint
-	switch v := userIDVal.(type) {
-	case uint:
-		userID = v
-	case int:
-		userID = uint(v)
-	case float64:
-		userID = uint(v)
+	roleVal := session.Get("role")
+	roleStr, ok := roleVal.(string)
+	if !ok || roleStr != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
 	}
 
 	var nodes []models.Node
 	query := models.DB
 
-	if role == "proctor" {
+	if roleStr == "proctor" {
 		// 监考员只能看到：未被占用的节点（current_user_id IS NULL）或 自己占用的节点
 		query = query.Where("current_user_id IS NULL OR current_user_id = ?", userID)
 	}
@@ -65,28 +56,51 @@ func GetNodes(c *gin.Context) {
 		return
 	}
 
-	resp := make([]NodeResp, 0, len(nodes))
-	for _, n := range nodes {
-		assigned := false
-		if n.CurrentUserID != nil && *n.CurrentUserID == userID {
-			assigned = true
-		}
-		resp = append(resp, NodeResp{
-			ID:              n.ID,
-			Name:            n.Name,
-			Model:           n.Model,
-			Address:         n.Address,
-			Status:          n.Status,
-			Version:         n.Version,
-			CurrentUserID:   n.CurrentUserID,
-			LastHeartbeatAt: n.LastHeartbeatAt,
-			IsAssignedToMe:  assigned,
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    nodes,
+	})
+}
+
+func GetNodes(c *gin.Context) {
+	session := sessions.Default(c)
+	userIDVal := session.Get("user_id")
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "user_id 类型错误"})
+		return
+	}
+
+	roleVal := session.Get("role")
+	roleStr, ok := roleVal.(string)
+	if !ok {
+		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		return
+	}
+
+	var node models.Node
+	if err := models.DB.Where("id = ?", c.Param("id")).First(&node).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "节点不存在",
 		})
+		return
+	}
+
+	// 权限检查：管理员可以看到所有节点，监考员只能看到未占用或自己占用的节点
+	if roleStr != "admin" {
+		if node.CurrentUserID != nil && *node.CurrentUserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   "无权访问此节点",
+			})
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    resp,
+		"data":    node,
 	})
 }
 
