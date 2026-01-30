@@ -14,9 +14,16 @@ var DB *gorm.DB
 func Init() {
 	// 打开数据库
 	var err error
-	DB, err = gorm.Open(sqlite.Open("cc.db"), &gorm.Config{})
+	// SQLite: 使用 DSN 参数确保每个连接都启用外键约束。
+	DB, err = gorm.Open(sqlite.Open("cc.db?_foreign_keys=on"), &gorm.Config{})
 	if err != nil {
 		log.Fatal("failed to connect database")
+	}
+
+	// SQLite: 强制开启外键约束（默认是关闭的）。
+	// 没有这行，gorm 生成的 foreign key/constraint 大多不会真正生效。
+	if err := ConfigureSQLite(DB); err != nil {
+		log.Fatal("failed to configure sqlite:", err)
 	}
 
 	// 自动迁移所有表结构
@@ -31,8 +38,51 @@ func Init() {
 		log.Fatal("failed to migrate database:", err)
 	}
 
+	// 创建（或确保存在）部分索引/组合索引。
+	// 说明：部分唯一索引（partial unique index）无法仅靠 gorm tag 完整表达，因此这里用 Exec。
+	if err := EnsureSQLiteIndexes(DB); err != nil {
+		log.Fatal("failed to ensure sqlite indexes:", err)
+	}
+
 	// 初始化默认数据
 	initDefaultUser()
+}
+
+// ConfigureSQLite 为 SQLite 连接设置必要的 pragma。
+// 注意：PRAGMA 外键开关是“每个连接”的设置，必须在应用启动时设置。
+func ConfigureSQLite(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	return db.Exec("PRAGMA foreign_keys = ON;").Error
+}
+
+// EnsureSQLiteIndexes 创建 SQLite 特有（或 gorm 不易表达）的索引。
+func EnsureSQLiteIndexes(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+
+	// 业务约束：同一节点同一时刻仅允许一场“进行中考试”。
+	// end_time 为 NULL 表示进行中。
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_exams_node_active ON exams(node_id) WHERE end_time IS NULL;").Error; err != nil {
+		return err
+	}
+
+	// 告警：常用查询组合索引（按考试/类型+时间范围）。
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_alerts_exam_created ON alerts(exam_id, created_at);").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_alerts_exam_type_created ON alerts(exam_id, type, created_at);").Error; err != nil {
+		return err
+	}
+
+	// 节点清理任务：按状态+心跳时间过滤。
+	if err := db.Exec("CREATE INDEX IF NOT EXISTS idx_nodes_status_heartbeat ON nodes(status, last_heartbeat_at);").Error; err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func initDefaultUser() {
