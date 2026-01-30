@@ -1,0 +1,4 @@
+*.db
+/uploads/
+.DS_Store
+*.md

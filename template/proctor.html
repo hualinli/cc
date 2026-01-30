@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工作台 - 智慧监考系统</title>
+    <link rel="stylesheet" href="/css/all.min.css">
+    <link rel="stylesheet" href="/css/proctor.css">
+</head>
+
+<body>
+    <nav class="navbar">
+        <div class="logo">
+            <i class="fa-solid fa-eye"></i>
+            <span>智慧监考系统</span>
+        </div>
+        <div class="user-info">
+            <span id="usernameDisplay">监考员</span>
+            <button onclick="logout()" class="logout-btn" style="border:none; cursor:pointer; font-family:inherit;">
+                <i class="fa-solid fa-right-from-bracket"></i> 退出登录
+            </button>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header class="header">
+            <h1>选择监考节点</h1>
+            <p>请从下方选择一个空闲的监考节点进入工作状态。</p>
+        </header>
+
+        <div id="nodeGrid" class="node-grid">
+            <!-- 节点将通过 JavaScript 动态加载 -->
+            <div class="empty-state">
+                <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2rem; color: var(--primary-color);"></i>
+                <p style="margin-top: 1rem;">正在加载节点列表...</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="loadingOverlay" class="loading-overlay">
+        <div style="text-align: center;">
+            <div class="spinner"></div>
+            <p style="margin-top: 1rem; font-weight: 600;">正在分配节点，请稍候...</p>
+        </div>
+    </div>
+
+    <script src="/js/proctor.js?v=1.0.1"></script>
+</body>
+
+</html>

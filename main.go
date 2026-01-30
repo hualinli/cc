@@ -1,0 +1,153 @@
+package main
+
+import (
+	"cc/handlers"
+	"cc/middleware"
+	"cc/models"
+	"cc/tasks"
+	"net/http"
+
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
+	"github.com/gin-gonic/gin"
+)
+
+func main() {
+	models.Init()
+	tasks.StartCleanupTask()
+	r := gin.Default()
+
+	store := cookie.NewStore([]byte("secret-key"))
+	store.Options(sessions.Options{
+		Path:     "/",
+		MaxAge:   86400 * 7, // 7 days
+		HttpOnly: true,
+		Secure:   false, // Set to true if using HTTPS
+		SameSite: http.SameSiteLaxMode,
+	})
+	r.Use(sessions.Sessions("session", store))
+
+	// 静态文件
+	r.Static("/css", "./template/css")
+	r.Static("/js", "./template/js")
+	r.Static("/webfonts", "./template/webfonts")
+	r.Static("/uploads", "./uploads") // 增加图片访问
+	r.StaticFile("/login", "./template/login.html")
+
+	// favicon 处理（避免 404 错误）
+	r.GET("/favicon.ico", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	// 公开路由无需鉴权
+	r.POST("/login", handlers.LoginPostHandler)
+	r.GET("/logout", handlers.LogoutHandler)
+
+	// 调试/初始化专用：节点配置一键导出 (正式上线前务必注释掉或删掉此行)
+	r.GET("/api/nodes/:id/export", handlers.ExportNodeConfig)
+
+	// 页面路由
+	authorized := r.Group("/")
+	authorized.Use(middleware.AuthMiddleware())
+	{
+		// 根路径：根据角色分流
+		authorized.GET("/", func(c *gin.Context) {
+			session := sessions.Default(c)
+			role := session.Get("role")
+			if role == "admin" {
+				// 管理员访问 / 也可以看监考员页面，或者跳转到 /admin
+				// 这里我们根据需求，如果管理员直接访问 /，就给他们看监考页面，方便他们调试
+				c.File("./template/proctor.html")
+				return
+			}
+			c.File("./template/proctor.html")
+		})
+
+		admin := authorized.Group("/admin")
+		admin.Use(middleware.AdminMiddleware())
+		{
+			admin.GET("/", func(c *gin.Context) {
+				c.File("./template/index.html")
+			})
+		}
+	}
+
+	// API 路由
+	api := r.Group("/api")
+	api.Use(middleware.AuthMiddleware())
+	{
+		// 获取个人信息
+		api.GET("/me", func(c *gin.Context) {
+			session := sessions.Default(c)
+			c.JSON(http.StatusOK, gin.H{
+				"id":       session.Get("user_id"),
+				"username": session.Get("username"),
+				"role":     session.Get("role"),
+			})
+		})
+
+		api.GET("/proctor/nodes", handlers.GetNodes)
+		api.POST("/proctor/nodes/:id/jump", handlers.GetNodeJumpURL)
+		api.POST("/proctor/nodes/:id/release", handlers.ReleaseNode)
+
+		adminAPI := api.Group("/")
+		adminAPI.Use(middleware.AdminMiddleware())
+		{
+			// 用户管理
+			adminAPI.GET("/users", handlers.GetUsers)
+			adminAPI.POST("/users", handlers.CreateUser)
+			adminAPI.DELETE("/users/:id", handlers.DeleteUser)
+			adminAPI.PUT("/users/:id", handlers.UpdateUser)
+
+			// 改密码
+			adminAPI.PUT("/users/password", handlers.ChangePassword)
+
+			// 节点管理
+			adminAPI.GET("/nodes", handlers.GetNodes)
+			adminAPI.POST("/nodes", handlers.CreateNode)
+			adminAPI.DELETE("/nodes/:id", handlers.DeleteNode)
+			adminAPI.PUT("/nodes/:id", handlers.UpdateNode)
+			adminAPI.GET("/nodes/:id/jump", handlers.GetNodeJumpURL)
+			adminAPI.POST("/nodes/:id/release", handlers.ReleaseNode)
+
+			// 教室管理
+			adminAPI.GET("/rooms", handlers.GetRooms)
+			adminAPI.POST("/rooms", handlers.CreateRoom)
+			adminAPI.DELETE("/rooms/:id", handlers.DeleteRoom)
+			adminAPI.PUT("/rooms/:id", handlers.UpdateRoom)
+
+			// 考试管理（完整CRUD）
+			adminAPI.GET("/exams", handlers.GetExams)
+			adminAPI.GET("/exams/stats", handlers.GetExamStats)
+			adminAPI.POST("/exams", handlers.CreateExam)
+			adminAPI.PUT("/exams/:id", handlers.UpdateExam)
+			adminAPI.DELETE("/exams/:id", handlers.DeleteExam)
+
+			// 异常管理（完整CRUD）
+			adminAPI.GET("/alerts", handlers.GetAlerts)
+			adminAPI.GET("/alerts/stats", handlers.GetAlertStats)
+			adminAPI.POST("/alerts", handlers.CreateAlert)
+			adminAPI.PUT("/alerts/:id", handlers.UpdateAlert)
+			adminAPI.DELETE("/alerts/:id", handlers.DeleteAlert)
+
+			// 配置同步
+			adminAPI.POST("/sync/rooms", handlers.SyncRooms)
+			adminAPI.POST("/sync/config", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"success": true, "message": "Config sync triggered"})
+			})
+		}
+	}
+
+	// 边缘节点专用 API
+	nodeAPI := r.Group("/node-api/v1")
+	nodeAPI.Use(middleware.NodeAuthMiddleware())
+	{
+		nodeAPI.POST("/heartbeat", handlers.NodeHeartbeat)
+		nodeAPI.POST("/tasks/sync", handlers.SyncTask)
+		nodeAPI.POST("/alerts", handlers.ReportAlert)
+	}
+
+	// 启动服务器
+	// 默认监听端口 8080
+	r.Run(":8080")
+}

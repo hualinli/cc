@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - 智慧监考系统</title>
+    <!-- 引入 FontAwesome 图标 -->
+    <link rel="stylesheet" href="/css/all.min.css">
+    <!-- 引入自定义样式 -->
+    <link rel="stylesheet" href="/css/login.css">
+</head>
+
+<body>
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <i class="fa-solid fa-eye"></i>
+                <h2>智慧监考系统</h2>
+                <p>Smart Proctoring System V1.0</p>
+            </div>
+
+            <form id="loginForm">
+                <div class="form-group">
+                    <i class="fa-solid fa-user"></i>
+                    <input type="text" name="username" placeholder="用户名" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <i class="fa-solid fa-lock"></i>
+                    <input type="password" name="password" placeholder="密码" required autocomplete="current-password">
+                </div>
+                <button type="submit" id="loginBtn" class="login-btn">
+                    <span class="btn-loader" style="display: none;"><i
+                            class="fa-solid fa-circle-notch fa-spin"></i></span>
+                    <span class="btn-text">进入系统</span>
+                </button>
+            </form>
+
+            <div id="errorBox" class="error-msg"></div>
+
+            <div class="footer-text">
+                &copy; 2024 智慧监考系统 版权所有
+            </div>
+        </div>
+    </div>
+
+    <!-- 离线引用本地 JS -->
+    <script src="/js/login.js"></script>
+</body>
+
+</html>

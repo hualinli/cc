@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧监考系统 - 管理中心</title>
+    <!-- 引入 ECharts -->
+    <script src="/js/echarts.min.js"></script>
+    <link rel="stylesheet" href="/css/all.min.css">
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+
+<body>
+
+    <div class="sidebar" id="sidebar">
+        <div class="logo">
+            <span><i class="fa-solid fa-eye"></i> <span class="logo-text">智慧监考系统</span></span>
+            <i class="fa-solid fa-angles-left collapse-btn" id="collapseBtn" onclick="toggleSidebar()"></i>
+        </div>
+        <div class="nav-item active" onclick="switchTab('console', this)">
+            <i class="fa-solid fa-chart-line"></i><span>总控制台</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('observation', this)">
+            <i class="fa-solid fa-table-cells"></i><span>集中观测</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('single-view', this)">
+            <i class="fa-solid fa-square"></i><span>单点观测</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('history', this)">
+            <i class="fa-solid fa-clock-rotate-left"></i><span>数据回溯</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('user-mgmt', this)">
+            <i class="fa-solid fa-users-gear"></i><span>用户管理</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('node-mgmt', this)">
+            <i class="fa-solid fa-server"></i><span>节点管理</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('room-mgmt', this)">
+            <i class="fa-solid fa-school"></i><span>教室管理</span>
+        </div>
+        <div class="nav-item" onclick="switchTab('settings', this)">
+            <i class="fa-solid fa-gear"></i><span>系统设置</span>
+        </div>
+
+        <div class="sidebar-footer">
+            <div class="user-info-trigger">
+                <div class="user-avatar" id="sidebarAvatar">A</div>
+                <span class="username" id="sidebarUsername">管理员</span>
+            </div>
+            <div class="user-popover">
+                <button class="popover-item logout-btn" onclick="logout()">
+                    <i class="fa-solid fa-right-from-bracket"></i><span> 退出登录</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="header-bar">
+            <div class="page-title" id="pageTitle">总控制台</div>
+            <div class="header-right-group">
+                <div class="header-controls" id="grid-controls">
+                    <label><i class="fa-solid fa-table"></i> 布局:</label>
+                    <select id="grid-rows" class="header-select" onchange="updateGrid()">
+                        <option value="2">2 行</option>
+                        <option value="3" selected>3 行</option>
+                        <option value="4">4 行</option>
+                        <option value="5">5 行</option>
+                    </select>
+                    <span style="color: #555">x</span>
+                    <select id="grid-cols" class="header-select" onchange="updateGrid()">
+                        <option value="2">2 列</option>
+                        <option value="3" selected>3 列</option>
+                        <option value="4">4 列</option>
+                        <option value="5">5 列</option>
+                    </select>
+                </div>
+                <div class="current-time" id="clock">--:--:--</div>
+                <div class="header-btn" onclick="toggleFullScreen()" title="切换全屏">
+                    <i class="fa-solid fa-expand" id="fs-icon"></i>
+                </div>
+            </div>
+        </div>
+
+        <div id="console" class="page-section active">
+            <div class="stats-grid">
+                <div class="card stat-card">
+                    <span class="stat-label">正在考试考场</span>
+                    <span class="stat-value text-neon" id="stat-rooms">0</span>
+                </div>
+                <div class="card stat-card">
+                    <span class="stat-label">实时考生总数</span>
+                    <span class="stat-value text-main" id="stat-students">0</span>
+                </div>
+                <div class="card stat-card">
+                    <span class="stat-label">异常行为总数</span>
+                    <span class="stat-value text-danger" id="stat-anomalies">0</span>
+                </div>
+                <div class="card stat-card">
+                    <span class="stat-label">全场异常系数</span>
+                    <span class="stat-value text-warning" id="stat-coeff">0.000</span>
+                </div>
+            </div>
+            <div class="charts-container">
+                <div class="card" id="chart-main"></div>
+                <div class="card" id="chart-pie"></div>
+            </div>
+            <div class="card detail-table-container">
+                <h3 style="margin-bottom: 15px; font-size: 16px; border-left: 4px solid var(--accent-color); padding-left: 10px;">
+                    实时观测 - 正在进行的考试</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>考试科目</th>
+                            <th>楼栋</th>
+                            <th>考场</th>
+                            <th>节点</th>
+                            <th>开始时间</th>
+                            <th>结束时间</th>
+                            <th>考生人数</th>
+                            <th>异常人数</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="exam-list-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="observation" class="page-section" style="height: 100%;">
+            <div class="card controls-bar filter-group" style="margin-bottom: 15px;">
+                <div class="input-wrap">
+                    <label><i class="fa-solid fa-video"></i> 实时监控选择</label>
+                    <select id="exam-selector" onchange="loadSelectedExamForObservation()" class="header-select">
+                        <option value="">-- 请选择考试 --</option>
+                    </select>
+                </div>
+                <button onclick="fetchExamsForObservation()" class="btn-refresh"><i class="fa-solid fa-rotate"></i> 刷新列表</button>
+            </div>
+            <div class="monitor-grid" id="monitor-container"></div>
+        </div>
+
+        <div id="single-view" class="page-section" style="height: 100%;">
+            <div class="monitor-grid" style="grid-template-columns: 1fr; grid-template-rows: 1fr;">
+                <div class="monitor-screen add-btn" onclick="addExam(0)">
+                    <i class="fa-solid fa-plus"></i>
+                </div>
+            </div>
+        </div>
+
+        <div id="history" class="page-section">
+            <div class="card controls-bar filter-group">
+                <div class="input-wrap">
+                    <label>楼宇名称</label>
+                    <select id="history-building" onchange="updateRoomDropdown()">
+                        <option value="">全部楼宇</option>
+                    </select>
+                </div>
+                <div class="input-wrap">
+                    <label>教室名称</label>
+                    <select id="history-room">
+                        <option value="">全部教室</option>
+                    </select>
+                </div>
+                <div class="input-wrap">
+                    <label>考试科目</label>
+                    <input type="text" id="history-subject" placeholder="模糊搜索科目">
+                </div>
+                <div class="input-wrap">
+                    <label>考试时间</label>
+                    <input type="date" id="history-date">
+                </div>
+                <button onclick="fetchHistory()"><i class="fa-solid fa-magnifying-glass"></i> 查询记录</button>
+            </div>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>记录ID</th>
+                            <th>考试时间</th>
+                            <th>考试科目</th>
+                            <th>教室</th>
+                            <th>异常数量</th>
+                            <th>查看记录</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>REC-2023001</td>
+                            <td>2023-10-15</td>
+                            <td>高等数学</td>
+                            <td>A-101</td>
+                            <td class="text-danger">2</td>
+                            <td><button style="padding: 4px 8px; font-size: 12px;">查看</button></td>
+                            <td><button class="btn-table btn-delete"><i class="fa-solid fa-trash"></i> 删除</button></td>
+                        </tr>
+                        <tr>
+                            <td>REC-2023002</td>
+                            <td>2023-10-15</td>
+                            <td>高等数学</td>
+                            <td>A-102</td>
+                            <td class="text-success">0</td>
+                            <td><button style="padding: 4px 8px; font-size: 12px;">查看</button></td>
+                            <td><button class="btn-table btn-delete"><i class="fa-solid fa-trash"></i> 删除</button></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+
+        <div id="user-mgmt" class="page-section">
+            <div style="display: flex; gap: 20px;">
+                <div class="card" style="flex: 2;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <div class="setting-section-title" style="margin-bottom: 0;">所有用户</div>
+                        <button class="btn-add-user" onclick="openUserModal('add')">
+                            <i class="fa-solid fa-user-plus"></i> 新增用户
+                        </button>
+                    </div>
+                    <table class="user-table">
+                        <thead>
+                            <tr>
+                                <th>用户名</th>
+                                <th>角色</th>
+                                <th>创建时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="user-list-body"></tbody>
+                    </table>
+                </div>
+                <div class="card" style="flex: 1;">
+                    <div class="setting-section-title">修改个人密码</div>
+                    <div class="form-row">
+                        <label>旧密码</label>
+                        <input type="password" id="oldPassword" placeholder="请输入旧密码">
+                    </div>
+                    <div class="form-row">
+                        <label>新密码</label>
+                        <input type="password" id="newPassword" placeholder="请输入新密码">
+                    </div>
+                    <div class="form-row">
+                        <label>确认新密码</label>
+                        <input type="password" id="confirmPassword" placeholder="请再次输入新密码">
+                    </div>
+                    <div style="margin-top: 20px; text-align: right;">
+                        <button onclick="changePassword()" style="width: 100%;">
+                            <i class="fa-solid fa-key"></i> 确认修改
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="node-mgmt" class="page-section">
+            <!-- 节点统计 -->
+            <div class="card" style="margin-bottom: 20px;">
+                <div class="setting-section-title">节点统计</div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
+                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(34, 197, 94, 0.1); border-radius: 6px;">
+                        <span style="font-size: 12px; color: #888; margin-bottom: 5px;">在线节点</span>
+                        <span style="font-size: 28px; font-weight: bold; color: var(--success-color);" id="node-online-count">0</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
+                        <span style="font-size: 12px; color: #888; margin-bottom: 5px;">使用中节点</span>
+                        <span style="font-size: 28px; font-weight: bold; color: var(--danger-color);" id="node-using-count">0</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
+                        <span style="font-size: 12px; color: #888; margin-bottom: 5px;">离线节点</span>
+                        <span style="font-size: 28px; font-weight: bold; color: #ef4444;" id="node-offline-count">0</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 6px;">
+                        <span style="font-size: 12px; color: #888; margin-bottom: 5px;">节点总数</span>
+                        <span style="font-size: 28px; font-weight: bold;" id="node-total-count">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 节点列表 -->
+            <div class="card">
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <div class="setting-section-title" style="margin-bottom: 0;">所有节点</div>
+                    <button class="btn-add-user" onclick="openNodeModal('add')">
+                        <i class="fa-solid fa-plus"></i> 新增节点
+                    </button>
+                </div>
+                <table class="user-table" id="node-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>节点名称</th>
+                            <th>设备型号</th>
+                            <th>设备地址</th>
+                            <th>状态</th>
+                            <th>最后心跳</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="node-list-body"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="room-mgmt" class="page-section">
+            <div style="display: flex; gap: 20px;">
+                <div class="card" style="flex: 2;">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <div class="setting-section-title" style="margin-bottom: 0;">所有教室</div>
+                        <button class="btn-add-user" onclick="openRoomModal('add')">
+                            <i class="fa-solid fa-plus"></i> 新增教室
+                        </button>
+                    </div>
+                    <table class="user-table" id="room-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>教室名称</th>
+                                <th>楼栋</th>
+                                <th>RTSP地址</th>
+                                <th>创建时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="classroom-list-body"></tbody>
+                    </table>
+                </div>
+                <div class="card" style="flex: 1;">
+                    <div class="setting-section-title">教室统计</div>
+                    <div style="display: flex; flex-direction: column; gap: 15px;">
+                        <div
+                            style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(6, 182, 212, 0.1); border-radius: 6px;">
+                            <span>教室总数</span>
+                            <span style="font-size: 20px; font-weight: bold; color: var(--accent-color);"
+                                id="room-total-count">0</span>
+                        </div>
+                        <div
+                            style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 6px;">
+                            <span>楼栋数量</span>
+                            <span style="font-size: 20px; font-weight: bold;" id="room-building-count">0</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="settings" class="page-section">
+            <div class="settings-container">
+                <div class="card" style="max-width: 400px;">
+                    <div class="setting-section-title">配置同步</div>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <button onclick="syncRooms()"><i class="fa-solid fa-rotate"></i> 同步教室信息</button>
+                        <button onclick="syncConfig()"><i class="fa-solid fa-sliders"></i> 同步配置信息</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="userModal">
+        <div class="modal">
+            <div class="setting-section-title" id="userModalTitle">用户信息</div>
+            <input type="hidden" id="modalUserId">
+            <div class="form-row">
+                <label>用户名</label>
+                <input type="text" id="modalUsername" placeholder="请输入用户名">
+            </div>
+            <div class="form-row">
+                <label id="modalPasswordLabel">密码</label>
+                <input type="password" id="modalPassword" placeholder="请输入密码">
+            </div>
+            <div class="form-row">
+                <label>角色</label>
+                <select id="modalRole">
+                    <option value="proctor">监考员 (Proctor)</option>
+                    <option value="admin">管理员 (Admin)</option>
+                </select>
+            </div>
+            <p id="modalNote" style="font-size: 11px; color: var(--text-muted); margin-top: 10px; display: none;"></p>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button style="flex: 1; background: #374151;" onclick="closeUserModal()">取消</button>
+                <button style="flex: 1;" id="modalSubmitBtn" onclick="submitUser()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="nodeModal">
+        <div class="modal">
+            <div class="setting-section-title" id="nodeModalTitle">节点信息</div>
+            <input type="hidden" id="modalNodeId">
+            <div class="form-row">
+                <label>节点名称</label>
+                <input type="text" id="modalNodeName" placeholder="请输入节点名称">
+            </div>
+            <div class="form-row">
+                <label>设备型号</label>
+                <input type="text" id="modalNodeModel" placeholder="请输入设备型号">
+            </div>
+            <div class="form-row">
+                <label>设备地址</label>
+                <input type="text" id="modalNodeAddress" placeholder="请输入设备地址">
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button style="flex: 1; background: #374151;" onclick="closeNodeModal()">取消</button>
+                <button style="flex: 1;" id="modalNodeSubmitBtn" onclick="submitNode()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="roomModal">
+        <div class="modal">
+            <div class="setting-section-title" id="roomModalTitle">教室信息</div>
+            <input type="hidden" id="modalRoomId">
+            <div class="form-row">
+                <label>楼栋</label>
+                <input type="text" id="modalRoomBuilding" placeholder="请输入楼栋名称">
+            </div>
+            <div class="form-row">
+                <label>教室名称</label>
+                <input type="text" id="modalRoomName" placeholder="请输入教室名称">
+            </div>
+            <div class="form-row">
+                <label>RTSP地址</label>
+                <input type="text" id="modalRoomRTSPUrl" placeholder="请输入RTSP流地址">
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button style="flex: 1; background: #374151;" onclick="closeRoomModal()">取消</button>
+                <button style="flex: 1;" id="modalRoomSubmitBtn" onclick="submitRoom()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/script.js?v=1.0.2"></script>
+</body>
+
+</html>
