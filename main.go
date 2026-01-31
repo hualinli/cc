@@ -20,7 +20,7 @@ func main() {
 	store := cookie.NewStore([]byte("secret-key"))
 	store.Options(sessions.Options{
 		Path:     "/",
-		MaxAge:   86400 * 7, // 7 days
+		MaxAge:   3600 * 4, // 4 hours
 		HttpOnly: true,
 		Secure:   false, // Set to true if using HTTPS
 		SameSite: http.SameSiteLaxMode,
@@ -31,10 +31,10 @@ func main() {
 	r.Static("/css", "./template/css")
 	r.Static("/js", "./template/js")
 	r.Static("/webfonts", "./template/webfonts")
-	r.Static("/uploads", "./uploads") // 增加图片访问
+	r.Static("/uploads", "./uploads")
 	r.StaticFile("/login", "./template/login.html")
 
-	// favicon 处理（避免 404 错误）
+	// favicon 处理
 	r.GET("/favicon.ico", func(c *gin.Context) {
 		c.Status(http.StatusNoContent)
 	})
@@ -46,7 +46,7 @@ func main() {
 	// 调试/初始化专用：节点配置一键导出 (正式上线前务必注释掉或删掉此行)
 	r.GET("/api/nodes/:id/export", handlers.ExportNodeConfig)
 
-	// 页面路由
+	// 主页面路由
 	authorized := r.Group("/")
 	authorized.Use(middleware.AuthMiddleware())
 	{
@@ -55,8 +55,6 @@ func main() {
 			session := sessions.Default(c)
 			role := session.Get("role")
 			if role == "admin" {
-				// 管理员访问 / 也可以看监考员页面，或者跳转到 /admin
-				// 这里我们根据需求，如果管理员直接访问 /，就给他们看监考页面，方便他们调试
 				c.File("./template/proctor.html")
 				return
 			}
@@ -124,6 +122,7 @@ func main() {
 			})
 		})
 
+		// 监考员专用 API
 		api.GET("/proctor/nodes", handlers.ListNodes)
 		api.POST("/proctor/nodes/:id/jump", handlers.GetNodeJumpURL)
 		api.POST("/proctor/nodes/:id/release", handlers.ReleaseNode)
@@ -133,7 +132,7 @@ func main() {
 		adminAPI.Use(middleware.AdminMiddleware())
 		{
 			// 用户管理
-			adminAPI.GET("/users", handlers.GetUsers)
+			adminAPI.GET("/users", handlers.ListUsers)
 			adminAPI.POST("/users", handlers.CreateUser)
 			adminAPI.DELETE("/users/:id", handlers.DeleteUser)
 			adminAPI.PUT("/users/:id", handlers.UpdateUser)
@@ -153,23 +152,22 @@ func main() {
 			adminAPI.PUT("/rooms/:id", handlers.UpdateRoom)
 
 			// 考试管理（完整CRUD）
-			adminAPI.GET("/exams", handlers.GetExams)
+			adminAPI.GET("/exams", handlers.ListExams)
+			adminAPI.GET("/exams/:id", handlers.GetExams)
 			adminAPI.GET("/exams/stats", handlers.GetExamStats)
 			adminAPI.POST("/exams", handlers.CreateExam)
 			adminAPI.PUT("/exams/:id", handlers.UpdateExam)
 			adminAPI.DELETE("/exams/:id", handlers.DeleteExam)
 
 			// 异常管理（完整CRUD）
-			adminAPI.GET("/alerts", handlers.GetAlerts)
+			adminAPI.GET("/alerts", handlers.ListAlerts)
+			adminAPI.GET("/alerts/:id", handlers.GetAlerts)
 			adminAPI.POST("/alerts", handlers.CreateAlert)
 			adminAPI.PUT("/alerts/:id", handlers.UpdateAlert)
 			adminAPI.DELETE("/alerts/:id", handlers.DeleteAlert)
 
 			// 配置同步
 			adminAPI.POST("/sync/rooms", handlers.SyncRooms)
-			adminAPI.POST("/sync/config", func(c *gin.Context) {
-				c.JSON(http.StatusOK, gin.H{"success": true, "message": "Config sync triggered"})
-			})
 		}
 	}
 
@@ -182,7 +180,5 @@ func main() {
 		nodeAPI.POST("/alerts", handlers.ReportAlert)
 	}
 
-	// 启动服务器
-	// 默认监听端口 8080
 	r.Run(":8080")
 }

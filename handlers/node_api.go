@@ -2,9 +2,12 @@ package handlers
 
 import (
 	"cc/models"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +25,7 @@ func NodeHeartbeat(c *gin.Context) {
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
+			"error":   "请求参数错误",
 		})
 		return
 	}
@@ -31,6 +35,7 @@ func NodeHeartbeat(c *gin.Context) {
 	if err := models.DB.Where("id = ?", nodeID).First(&node).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
+			"error":   "节点不存在",
 		})
 		return
 	}
@@ -105,16 +110,16 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
-		// 创建考试记录
-		var nodeIDUint uint
-		switch v := nodeID.(type) {
-		case uint:
-			nodeIDUint = v
-		case int:
-			nodeIDUint = uint(v)
-		case float64:
-			nodeIDUint = uint(v)
+		// 获取节点ID
+		nodeIDUint, ok := nodeID.(uint)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "内部错误：节点ID类型异常",
+			})
+			return
 		}
+
 		exam := models.Exam{
 			Name:          input.Subject + "考试",
 			Subject:       input.Subject,
@@ -123,7 +128,7 @@ func SyncTask(c *gin.Context) {
 			UserID:        *node.CurrentUserID, // 当前占用节点的用户
 			StartTime:     input.StartTime,
 			EndTime:       nil, // 开始时结束时间仍为 NULL
-			ExamineeCount: 0,
+			ExamineeCount: input.ExamineeCount,
 		}
 
 		if err := models.DB.Create(&exam).Error; err != nil {
@@ -134,8 +139,11 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
-		// 更新节点的当前考试ID
-		models.DB.Model(&node).Update("current_exam_id", exam.ID)
+		// 更新节点的当前考试ID并设置状态为 busy
+		models.DB.Model(&node).Updates(map[string]any{
+			"current_exam_id": exam.ID,
+			"status":          models.NodeStatusBusy,
+		})
 
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
@@ -161,10 +169,11 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
-		// 清除节点的当前考试ID和用户ID
+		// 清除节点的当前考试ID和用户ID，并恢复空闲状态
 		models.DB.Model(&node).Updates(map[string]any{
 			"current_exam_id": nil,
 			"current_user_id": nil,
+			"status":          models.NodeStatusIdle,
 		})
 
 		c.JSON(http.StatusOK, gin.H{
@@ -240,10 +249,16 @@ func ReportAlert(c *gin.Context) {
 	// 保存图片
 	uploadsDir := "./uploads/alerts"
 	os.MkdirAll(uploadsDir, os.ModePerm)
-	filename := fmt.Sprintf("%d_%s", time.Now().Unix(), file.Filename)
-	filepath := fmt.Sprintf("%s/%s", uploadsDir, filename)
 
-	if err := c.SaveUploadedFile(file, filepath); err != nil {
+	// 工程实践：使用 高精度时间戳 + 随机字符串 + 原始后缀，确保全球唯一性和安全性
+	// 避免多个节点在同一秒上报重名文件，同时也隐藏了原始文件名（可能包含敏感信息或特殊字符）
+	randomBuf := make([]byte, 8)
+	rand.Read(randomBuf)
+	ext := filepath.Ext(file.Filename)
+	filename := fmt.Sprintf("%d_%s%s", time.Now().UnixNano(), hex.EncodeToString(randomBuf), ext)
+	filepathStr := fmt.Sprintf("%s/%s", uploadsDir, filename)
+
+	if err := c.SaveUploadedFile(file, filepathStr); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "保存图片失败",
@@ -252,14 +267,13 @@ func ReportAlert(c *gin.Context) {
 	}
 
 	// 转换nodeID类型
-	var nodeIDUint uint
-	switch v := nodeID.(type) {
-	case uint:
-		nodeIDUint = v
-	case int:
-		nodeIDUint = uint(v)
-	case float64:
-		nodeIDUint = uint(v)
+	nodeIDUint, ok := nodeID.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "内部错误：节点ID类型异常",
+		})
+		return
 	}
 
 	// 校验 exam 必须存在且必须属于当前节点（防止节点伪造/写错 exam_id）。
@@ -291,7 +305,7 @@ func ReportAlert(c *gin.Context) {
 	}
 
 	// 创建异常记录
-	dbPath := filepath
+	dbPath := filepathStr
 	if len(dbPath) > 1 && dbPath[0] == '.' {
 		dbPath = dbPath[1:] // 去掉开头的 .
 	}

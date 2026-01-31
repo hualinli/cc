@@ -10,7 +10,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-func GetUsers(c *gin.Context) {
+func ListUsers(c *gin.Context) {
 	var users []models.User
 
 	if err := models.DB.Find(&users).Error; err != nil {
