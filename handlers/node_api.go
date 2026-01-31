@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -61,6 +62,14 @@ func NodeHeartbeat(c *gin.Context) {
 // SyncTask 同步考试状态
 func SyncTask(c *gin.Context) {
 	nodeID, _ := c.Get("node_id")
+	nodeIDUint, ok := nodeID.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "内部错误：节点ID类型异常",
+		})
+		return
+	}
 
 	var input struct {
 		Action          string    `json:"action"` // start, stop, sync
@@ -75,14 +84,14 @@ func SyncTask(c *gin.Context) {
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "请求参数错误",
+			"error":   "请求参数错误: " + err.Error(),
 		})
 		return
 	}
 
 	// 获取节点信息
 	var node models.Node
-	if err := models.DB.Where("id = ?", nodeID).First(&node).Error; err != nil {
+	if err := models.DB.First(&node, nodeIDUint).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"error":   "节点不存在",
@@ -110,12 +119,12 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
-		// 获取节点ID
-		nodeIDUint, ok := nodeID.(uint)
-		if !ok {
-			c.JSON(http.StatusInternalServerError, gin.H{
+		// 检查 Room 是否存在
+		var room models.Room
+		if err := models.DB.First(&room, input.RoomID).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
-				"error":   "内部错误：节点ID类型异常",
+				"error":   fmt.Sprintf("Room ID %d 不存在", input.RoomID),
 			})
 			return
 		}
@@ -134,7 +143,7 @@ func SyncTask(c *gin.Context) {
 		if err := models.DB.Create(&exam).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
-				"error":   "创建考试记录失败",
+				"error":   "创建考试记录失败: " + err.Error(),
 			})
 			return
 		}
@@ -219,51 +228,68 @@ func SyncTask(c *gin.Context) {
 func ReportAlert(c *gin.Context) {
 	nodeID, _ := c.Get("node_id")
 
-	// 解析表单数据
-	// 说明：Alert 规范化后仅强引用 exam_id；room_id 可以作为校验字段保留为可选。
-	roomID := c.PostForm("room_id")
-	examID := c.PostForm("exam_id")
-	alertType := c.PostForm("type")
-	seatNumber := c.PostForm("seat_number")
-	x := c.PostForm("x")
-	y := c.PostForm("y")
+	var input struct {
+		ExamID     uint    `json:"exam_id"`
+		Type       string  `json:"type"`
+		SeatNumber string  `json:"seat_number"`
+		Message    string  `json:"message"`
+		X          float64 `json:"x"`
+		Y          float64 `json:"y"`
+		RoomID     uint    `json:"room_id"`
+	}
 
-	if examID == "" || alertType == "" || seatNumber == "" {
+	// 尝试解析 JSON (模拟器通常发送 JSON)
+	isJSON := false
+	if strings.HasPrefix(c.GetHeader("Content-Type"), "application/json") {
+		if err := c.ShouldBindJSON(&input); err == nil {
+			isJSON = true
+		}
+	}
+
+	if !isJSON {
+		// 解析表单数据 (兼容老版本或带图片上传)
+		input.ExamID = parseUint(c.PostForm("exam_id"))
+		input.Type = c.PostForm("type")
+		input.SeatNumber = c.PostForm("seat_number")
+		input.Message = c.PostForm("message")
+		input.X = parseFloat(c.PostForm("x"))
+		input.Y = parseFloat(c.PostForm("y"))
+		input.RoomID = parseUint(c.PostForm("room_id"))
+	}
+
+	if input.ExamID == 0 || input.Type == "" || input.SeatNumber == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "缺少必要参数",
+			"error":   "缺少必要参数: exam_id, type 或 seat_number",
 		})
 		return
 	}
 
-	// 处理上传的图片
+	// 处理上传的图片 (表单模式支持，JSON模式暂不支持直接传图)
+	var dbPath string
 	file, err := c.FormFile("image")
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "缺少图片文件",
-		})
-		return
-	}
+	if err == nil {
+		// 保存图片
+		uploadsDir := "./uploads/alerts"
+		os.MkdirAll(uploadsDir, os.ModePerm)
 
-	// 保存图片
-	uploadsDir := "./uploads/alerts"
-	os.MkdirAll(uploadsDir, os.ModePerm)
+		randomBuf := make([]byte, 8)
+		rand.Read(randomBuf)
+		ext := filepath.Ext(file.Filename)
+		filename := fmt.Sprintf("%d_%s%s", time.Now().UnixNano(), hex.EncodeToString(randomBuf), ext)
+		filepathStr := fmt.Sprintf("%s/%s", uploadsDir, filename)
 
-	// 工程实践：使用 高精度时间戳 + 随机字符串 + 原始后缀，确保全球唯一性和安全性
-	// 避免多个节点在同一秒上报重名文件，同时也隐藏了原始文件名（可能包含敏感信息或特殊字符）
-	randomBuf := make([]byte, 8)
-	rand.Read(randomBuf)
-	ext := filepath.Ext(file.Filename)
-	filename := fmt.Sprintf("%d_%s%s", time.Now().UnixNano(), hex.EncodeToString(randomBuf), ext)
-	filepathStr := fmt.Sprintf("%s/%s", uploadsDir, filename)
-
-	if err := c.SaveUploadedFile(file, filepathStr); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   "保存图片失败",
-		})
-		return
+		if err := c.SaveUploadedFile(file, filepathStr); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "保存图片失败",
+			})
+			return
+		}
+		dbPath = filepathStr
+		if len(dbPath) > 1 && dbPath[0] == '.' {
+			dbPath = dbPath[1:] // 去掉开头的 .
+		}
 	}
 
 	// 转换nodeID类型
@@ -276,10 +302,9 @@ func ReportAlert(c *gin.Context) {
 		return
 	}
 
-	// 校验 exam 必须存在且必须属于当前节点（防止节点伪造/写错 exam_id）。
-	examIDUint := parseUint(examID)
+	// 校验 exam 必须存在且必须属于当前节点
 	var exam models.Exam
-	if err := models.DB.Where("id = ?", examIDUint).First(&exam).Error; err != nil {
+	if err := models.DB.Where("id = ?", input.ExamID).First(&exam).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   "exam_id 无效",
@@ -293,31 +318,26 @@ func ReportAlert(c *gin.Context) {
 		})
 		return
 	}
-	if roomID != "" {
-		roomIDUint := parseUint(roomID)
-		if roomIDUint != exam.RoomID {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error":   "room_id 与考试不匹配",
-			})
-			return
-		}
-	}
-
-	// 创建异常记录
-	dbPath := filepathStr
-	if len(dbPath) > 1 && dbPath[0] == '.' {
-		dbPath = dbPath[1:] // 去掉开头的 .
+	if input.RoomID != 0 && input.RoomID != exam.RoomID {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "room_id 与考试不匹配",
+		})
+		return
 	}
 
 	alert := models.Alert{
-		ExamID:      examIDUint,
-		Type:        models.AlertType(alertType),
-		SeatNumber:  seatNumber,
-		X:           parseFloat(x),
-		Y:           parseFloat(y),
-		Message:     fmt.Sprintf("座位 %s 发生异常: %s", seatNumber, alertType),
+		ExamID:      input.ExamID,
+		Type:        models.AlertType(input.Type),
+		SeatNumber:  input.SeatNumber,
+		X:           input.X,
+		Y:           input.Y,
+		Message:     input.Message,
 		PicturePath: dbPath,
+	}
+
+	if alert.Message == "" {
+		alert.Message = fmt.Sprintf("座位 %s 发生异常: %s", input.SeatNumber, input.Type)
 	}
 
 	if err := models.DB.Create(&alert).Error; err != nil {

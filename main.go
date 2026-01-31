@@ -139,6 +139,7 @@ func main() {
 
 			// 节点管理
 			adminAPI.GET("/nodes", handlers.ListNodes)
+			adminAPI.GET("/nodes/stats", handlers.GetNodeStats)
 			adminAPI.POST("/nodes", handlers.CreateNode)
 			adminAPI.DELETE("/nodes/:id", handlers.DeleteNode)
 			adminAPI.PUT("/nodes/:id", handlers.UpdateNode)

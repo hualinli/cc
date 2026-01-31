@@ -35,7 +35,7 @@ func ListNodes(c *gin.Context) {
 
 	roleVal := session.Get("role")
 	roleStr, ok := roleVal.(string)
-	if !ok || roleStr != "admin" {
+	if !ok {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
 			"error":   "权限不足",
@@ -384,6 +384,31 @@ func ReleaseNode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "节点已释放",
+	})
+}
+
+func GetNodeStats(c *gin.Context) {
+	var total, online, idleAvailable, busy, occupied, offline, errNodes int64
+
+	models.DB.Model(&models.Node{}).Count(&total)
+	models.DB.Model(&models.Node{}).Where("status != ?", models.NodeStatusOffline).Count(&online)
+	models.DB.Model(&models.Node{}).Where("status = ? AND current_user_id IS NULL", models.NodeStatusIdle).Count(&idleAvailable)
+	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusBusy).Count(&busy)
+	models.DB.Model(&models.Node{}).Where("current_user_id IS NOT NULL").Count(&occupied)
+	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusOffline).Count(&offline)
+	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusError).Count(&errNodes)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"total":          total,
+			"online":         online,
+			"idle_available": idleAvailable,
+			"busy":           busy,
+			"occupied":       occupied,
+			"offline":        offline,
+			"error":          errNodes,
+		},
 	})
 }
 

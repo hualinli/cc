@@ -800,16 +800,15 @@ async function fetchNodes() {
         const result = await response.json();
         const nodes = result.data || [];
 
-        // 更新统计面板
-        const onlineAvailableCount = nodes.filter(n => n.status === 'idle' && !n.current_user_id).length;
-        const usingCount = nodes.filter(n => n.current_user_id).length;
-        const offlineCount = nodes.filter(n => n.status === 'offline').length;
-        const totalCount = nodes.length;
+        // 获取精确统计数据
+        const statsResp = await fetch('/api/nodes/stats');
+        const statsResult = await statsResp.json();
+        const stats = statsResult.data || {};
 
-        document.getElementById('node-online-count').innerText = onlineAvailableCount;
-        document.getElementById('node-using-count').innerText = usingCount;
-        document.getElementById('node-offline-count').innerText = offlineCount;
-        document.getElementById('node-total-count').innerText = totalCount;
+        document.getElementById('node-online-count').innerText = stats.idle_available || 0;
+        document.getElementById('node-using-count').innerText = stats.occupied || 0;
+        document.getElementById('node-offline-count').innerText = stats.offline || 0;
+        document.getElementById('node-total-count').innerText = stats.total || 0;
 
         // 渲染表格
         const tbody = document.getElementById('node-list-body');
@@ -817,17 +816,20 @@ async function fetchNodes() {
         nodes.forEach(node => {
             // 细化状态显示
             let statusClass = 'bg-primary';
-            let statusText = '无人使用';
+            let statusText = '空闲可用';
             
             if (node.status === 'offline') {
                 statusClass = 'bg-danger';
                 statusText = '离线';
-            } else if (node.status === 'busy' && node.current_user_id) {
+            } else if (node.status === 'error') {
+                statusClass = 'bg-danger';
+                statusText = '故障';
+            } else if (node.status === 'busy') {
                 statusClass = 'bg-warning';
-                statusText = '繁忙';
+                statusText = '正在监考';
             } else if (node.current_user_id && node.status === 'idle') {
                 statusClass = 'bg-info';
-                statusText = '未启动推理';
+                statusText = '已占用(未开始)';
             }
 
             const tr = document.createElement('tr');
