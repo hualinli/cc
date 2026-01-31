@@ -39,9 +39,6 @@
         <div class="nav-item" onclick="switchTab('room-mgmt', this)">
             <i class="fa-solid fa-school"></i><span>教室管理</span>
         </div>
-        <div class="nav-item" onclick="switchTab('settings', this)">
-            <i class="fa-solid fa-gear"></i><span>系统设置</span>
-        </div>
 
         <div class="sidebar-footer">
             <div class="user-info-trigger">
@@ -313,9 +310,14 @@
                     <div
                         style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <div class="setting-section-title" style="margin-bottom: 0;">所有教室</div>
-                        <button class="btn-add-user" onclick="openRoomModal('add')">
-                            <i class="fa-solid fa-plus"></i> 新增教室
-                        </button>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn-refresh" onclick="syncRooms()">
+                                <i class="fa-solid fa-rotate"></i> 同步教室信息
+                            </button>
+                            <button class="btn-add-user" onclick="openRoomModal('add')">
+                                <i class="fa-solid fa-plus"></i> 新增教室
+                            </button>
+                        </div>
                     </div>
                     <table class="user-table" id="room-table">
                         <thead>
@@ -350,16 +352,6 @@
             </div>
         </div>
 
-        <div id="settings" class="page-section">
-            <div class="settings-container">
-                <div class="card" style="max-width: 400px;">
-                    <div class="setting-section-title">配置同步</div>
-                    <div style="display: flex; flex-direction: column; gap: 10px;">
-                        <button onclick="syncRooms()"><i class="fa-solid fa-rotate"></i> 同步教室信息</button>
-                        <button onclick="syncConfig()"><i class="fa-solid fa-sliders"></i> 同步配置信息</button>
-                    </div>
-                </div>
-            </div>
         </div>
     </div>
 

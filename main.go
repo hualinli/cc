@@ -78,29 +78,32 @@ func main() {
 	developAPI := r.Group("/dev-api/v1")
 	{
 		// 1. Node API 的增删改查
-		developAPI.GET("/nodes/:id", handlers.GetNodes)
+		developAPI.GET("/nodes/:id", handlers.GetNode)
 		developAPI.POST("/nodes", handlers.CreateNode)
 		developAPI.DELETE("/nodes/:id", handlers.DeleteNode)
 		developAPI.PUT("/nodes/:id", handlers.UpdateNode)
 		developAPI.GET("/nodes", handlers.ListNodes)
 
 		// 2. Room API 的增删改查
-		developAPI.GET("/rooms", handlers.GetRooms)
+		developAPI.GET("/rooms/:id", handlers.GetRoom)
 		developAPI.POST("/rooms", handlers.CreateRoom)
 		developAPI.DELETE("/rooms/:id", handlers.DeleteRoom)
 		developAPI.PUT("/rooms/:id", handlers.UpdateRoom)
+		developAPI.GET("/rooms", handlers.ListRooms)
 
 		// 3. Exam API 的增删改查
-		developAPI.GET("/exams", handlers.GetExams)
+		developAPI.GET("/exams/:id", handlers.GetExams)
 		developAPI.POST("/exams", handlers.CreateExam)
 		developAPI.DELETE("/exams/:id", handlers.DeleteExam)
 		developAPI.PUT("/exams/:id", handlers.UpdateExam)
+		developAPI.GET("/exams", handlers.ListExams)
 
 		// 4. Alert API 的增删改查
-		developAPI.GET("/alerts", handlers.GetAlerts)
+		developAPI.GET("/alerts/:id", handlers.GetAlerts)
 		developAPI.POST("/alerts", handlers.CreateAlert)
 		developAPI.DELETE("/alerts/:id", handlers.DeleteAlert)
 		developAPI.PUT("/alerts/:id", handlers.UpdateAlert)
+		developAPI.GET("/alerts", handlers.ListAlerts)
 	}
 
 	// 业务 API
@@ -121,9 +124,10 @@ func main() {
 			})
 		})
 
-		api.GET("/proctor/nodes", handlers.GetNodes)
+		api.GET("/proctor/nodes", handlers.ListNodes)
 		api.POST("/proctor/nodes/:id/jump", handlers.GetNodeJumpURL)
 		api.POST("/proctor/nodes/:id/release", handlers.ReleaseNode)
+		api.PUT("/users/password", handlers.ChangePassword)
 
 		adminAPI := api.Group("/")
 		adminAPI.Use(middleware.AdminMiddleware())
@@ -134,11 +138,8 @@ func main() {
 			adminAPI.DELETE("/users/:id", handlers.DeleteUser)
 			adminAPI.PUT("/users/:id", handlers.UpdateUser)
 
-			// 改密码
-			adminAPI.PUT("/users/password", handlers.ChangePassword)
-
 			// 节点管理
-			adminAPI.GET("/nodes", handlers.GetNodes)
+			adminAPI.GET("/nodes", handlers.ListNodes)
 			adminAPI.POST("/nodes", handlers.CreateNode)
 			adminAPI.DELETE("/nodes/:id", handlers.DeleteNode)
 			adminAPI.PUT("/nodes/:id", handlers.UpdateNode)
@@ -146,7 +147,7 @@ func main() {
 			adminAPI.POST("/nodes/:id/release", handlers.ReleaseNode)
 
 			// 教室管理
-			adminAPI.GET("/rooms", handlers.GetRooms)
+			adminAPI.GET("/rooms", handlers.ListRooms)
 			adminAPI.POST("/rooms", handlers.CreateRoom)
 			adminAPI.DELETE("/rooms/:id", handlers.DeleteRoom)
 			adminAPI.PUT("/rooms/:id", handlers.UpdateRoom)
@@ -160,7 +161,6 @@ func main() {
 
 			// 异常管理（完整CRUD）
 			adminAPI.GET("/alerts", handlers.GetAlerts)
-			adminAPI.GET("/alerts/stats", handlers.GetAlertStats)
 			adminAPI.POST("/alerts", handlers.CreateAlert)
 			adminAPI.PUT("/alerts/:id", handlers.UpdateAlert)
 			adminAPI.DELETE("/alerts/:id", handlers.DeleteAlert)

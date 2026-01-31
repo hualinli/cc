@@ -37,6 +37,10 @@ func setupTestDBForHandlers(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to migrate test database: %v", err)
 	}
 
+	// Create base data for foreign key constraints
+	db.Create(&models.User{Username: "admin", Password: "password", Role: "admin"})
+	db.Create(&models.Room{Name: "Base Room", Building: "Base", RTSPUrl: "rtsp://base"})
+
 	models.DB = db
 	return db
 }
@@ -48,7 +52,7 @@ func setupRouter() *gin.Engine {
 	r.Use(sessions.Sessions("mysession", store))
 
 	r.GET("/nodes", handlers.ListNodes)
-	r.GET("/nodes/:id", handlers.GetNodes)
+	r.GET("/nodes/:id", handlers.GetNode)
 	r.POST("/nodes", handlers.CreateNode)
 	r.DELETE("/nodes/:id", handlers.DeleteNode)
 	r.PUT("/nodes/:id", handlers.UpdateNode)
@@ -167,6 +171,57 @@ func TestDeleteNode(t *testing.T) {
 	db.Model(&models.Node{}).Count(&count)
 	if count != 0 {
 		t.Errorf("Expected 0 nodes, got %d", count)
+	}
+}
+
+func TestDeleteNodeWithExam(t *testing.T) {
+	db := setupTestDBForHandlers(t)
+	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+
+	// Create test node
+	node := models.Node{
+		Name:    "Node with Exam",
+		Token:   "token",
+		Model:   "Model",
+		Address: "127.0.0.1",
+		Status:  models.NodeStatusIdle,
+		Version: "1.0.0",
+	}
+	db.Create(&node)
+
+	// Create test exam that references the node
+	exam := models.Exam{
+		Name:    "Test Exam",
+		Subject: "Math",
+		RoomID:  1,
+		NodeID:  node.ID,
+		UserID:  1,
+	}
+	db.Create(&exam)
+
+	r := setupRouter()
+
+	req, _ := http.NewRequest("DELETE", "/nodes/1", nil)
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("Expected status 409, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &response)
+
+	if response["success"] != false {
+		t.Errorf("Expected success false, got %v", response["success"])
+	}
+
+	// Verify node was NOT deleted
+	var count int64
+	db.Model(&models.Node{}).Count(&count)
+	if count != 1 {
+		t.Errorf("Expected 1 node, got %d", count)
 	}
 }
 

@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-func GetRooms(c *gin.Context) {
+func ListRooms(c *gin.Context) {
 	var rooms []models.Room
 
 	if err := models.DB.Find(&rooms).Error; err != nil {
@@ -25,6 +26,23 @@ func GetRooms(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    rooms,
+	})
+}
+
+func GetRoom(c *gin.Context) {
+	var room models.Room
+
+	if err := models.DB.Where("id = ?", c.Param("id")).First(&room).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "教室不存在",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    room,
 	})
 }
 
@@ -51,6 +69,14 @@ func CreateRoom(c *gin.Context) {
 	}
 
 	if err := models.DB.Create(&room).Error; err != nil {
+		// 检查是否是唯一约束违反（教室名称重复）
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "Duplicate entry") {
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"error":   "教室名称已存在",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "创建教室失败",
@@ -75,6 +101,24 @@ func DeleteRoom(c *gin.Context) {
 		return
 	}
 
+	// 检查是否有相关的考试记录
+	var examCount int64
+	if err := models.DB.Model(&models.Exam{}).Where("room_id = ?", c.Param("id")).Count(&examCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "检查关联数据失败",
+		})
+		return
+	}
+
+	if examCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("无法删除教室：该教室有 %d 场相关考试记录", examCount),
+		})
+		return
+	}
+
 	if err := models.DB.Delete(&room).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -89,6 +133,16 @@ func DeleteRoom(c *gin.Context) {
 }
 
 func UpdateRoom(c *gin.Context) {
+	// 先检查教室是否存在
+	var room models.Room
+	if err := models.DB.Where("id = ?", c.Param("id")).First(&room).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "教室不存在",
+		})
+		return
+	}
+
 	var input map[string]any
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -105,10 +159,27 @@ func UpdateRoom(c *gin.Context) {
 	if building, ok := input["building"].(string); ok && building != "" {
 		updates["building"] = building
 	}
-	if rtspUrl, ok := input["rtsp_url"].(string); ok {
+	if rtspUrl, ok := input["rtsp_url"].(string); ok && rtspUrl != "" {
 		updates["rtsp_url"] = rtspUrl
 	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "没有提供有效的更新字段",
+		})
+		return
+	}
+
 	if err := models.DB.Model(&models.Room{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
+		// 检查是否是唯一约束违反（教室名称重复）
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "Duplicate entry") {
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"error":   "教室名称已存在",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "更新教室失败",

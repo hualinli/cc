@@ -211,6 +211,7 @@ func ReportAlert(c *gin.Context) {
 	nodeID, _ := c.Get("node_id")
 
 	// 解析表单数据
+	// 说明：Alert 规范化后仅强引用 exam_id；room_id 可以作为校验字段保留为可选。
 	roomID := c.PostForm("room_id")
 	examID := c.PostForm("exam_id")
 	alertType := c.PostForm("type")
@@ -218,7 +219,7 @@ func ReportAlert(c *gin.Context) {
 	x := c.PostForm("x")
 	y := c.PostForm("y")
 
-	if roomID == "" || examID == "" || alertType == "" || seatNumber == "" {
+	if examID == "" || alertType == "" || seatNumber == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   "缺少必要参数",
@@ -261,6 +262,34 @@ func ReportAlert(c *gin.Context) {
 		nodeIDUint = uint(v)
 	}
 
+	// 校验 exam 必须存在且必须属于当前节点（防止节点伪造/写错 exam_id）。
+	examIDUint := parseUint(examID)
+	var exam models.Exam
+	if err := models.DB.Where("id = ?", examIDUint).First(&exam).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "exam_id 无效",
+		})
+		return
+	}
+	if exam.NodeID != nodeIDUint {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "exam_id 不属于当前节点",
+		})
+		return
+	}
+	if roomID != "" {
+		roomIDUint := parseUint(roomID)
+		if roomIDUint != exam.RoomID {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "room_id 与考试不匹配",
+			})
+			return
+		}
+	}
+
 	// 创建异常记录
 	dbPath := filepath
 	if len(dbPath) > 1 && dbPath[0] == '.' {
@@ -268,9 +297,7 @@ func ReportAlert(c *gin.Context) {
 	}
 
 	alert := models.Alert{
-		NodeID:      nodeIDUint,
-		RoomID:      parseUint(roomID),
-		ExamID:      parseUint(examID),
+		ExamID:      examIDUint,
 		Type:        models.AlertType(alertType),
 		SeatNumber:  seatNumber,
 		X:           parseFloat(x),

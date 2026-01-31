@@ -133,6 +133,53 @@ document.addEventListener('DOMContentLoaded', () => {
         return date.toLocaleTimeString();
     }
 
+    // --- 修改密码逻辑 ---
+    const passwordModal = document.getElementById('passwordModal');
+    
+    window.openPasswordModal = function() {
+        passwordModal.style.display = 'flex';
+    }
+
+    window.closePasswordModal = function() {
+        passwordModal.style.display = 'none';
+        document.getElementById('oldPassword').value = '';
+        document.getElementById('newPassword').value = '';
+        document.getElementById('confirmPassword').value = '';
+    }
+
+    window.submitPasswordChange = async function() {
+        const old_password = document.getElementById('oldPassword').value;
+        const new_password = document.getElementById('newPassword').value;
+        const confirm_password = document.getElementById('confirmPassword').value;
+
+        if (!old_password || !new_password) {
+            alert("请填写完整信息");
+            return;
+        }
+
+        if (new_password !== confirm_password) {
+            alert("两次输入的新密码不一致");
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/users/password', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ old_password, new_password })
+            });
+            const result = await response.json();
+            if (response.ok && result.success) {
+                alert('密码修改成功，请重新登录');
+                window.location.href = '/login';
+            } else {
+                alert(result.error || '修改密码失败');
+            }
+        } catch (err) {
+            alert('网络请求出错');
+        }
+    }
+
     // Initial load
     fetchUserInfo();
     fetchNodes();

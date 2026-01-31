@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -20,22 +21,25 @@ func generateToken() string {
 	return hex.EncodeToString(b)
 }
 
-// 明确的返回结构，确保 JSON 序列化时字段持平且名称一致
-// 已移除，使用 models.Node 直接返回
-
 func ListNodes(c *gin.Context) {
 	session := sessions.Default(c)
 	userIDVal := session.Get("user_id")
 	userID, ok := userIDVal.(uint)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "user_id 类型错误"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "user_id 类型错误",
+		})
 		return
 	}
 
 	roleVal := session.Get("role")
 	roleStr, ok := roleVal.(string)
 	if !ok || roleStr != "admin" {
-		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "权限不足",
+		})
 		return
 	}
 
@@ -62,19 +66,25 @@ func ListNodes(c *gin.Context) {
 	})
 }
 
-func GetNodes(c *gin.Context) {
+func GetNode(c *gin.Context) {
 	session := sessions.Default(c)
 	userIDVal := session.Get("user_id")
 	userID, ok := userIDVal.(uint)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "user_id 类型错误"})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "user_id 类型错误",
+		})
 		return
 	}
 
 	roleVal := session.Get("role")
 	roleStr, ok := roleVal.(string)
 	if !ok {
-		c.JSON(http.StatusForbidden, gin.H{"error": "权限不足"})
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "权限不足",
+		})
 		return
 	}
 
@@ -106,16 +116,16 @@ func GetNodes(c *gin.Context) {
 
 func CreateNode(c *gin.Context) {
 	type Input struct {
-		Name    string `json:"name"`
-		Model   string `json:"model"`
-		Address string `json:"address"`
+		Name    string `json:"name" binding:"required"`
+		Model   string `json:"model" binding:"required"`
+		Address string `json:"address" binding:"required"`
 	}
 
 	var input Input
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "输入错误",
+			"error":   "输入错误：请填写必填字段",
 		})
 		return
 	}
@@ -130,6 +140,13 @@ func CreateNode(c *gin.Context) {
 	}
 
 	if err := models.DB.Create(&node).Error; err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "Duplicate entry") {
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"error":   "节点名称已存在",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "创建节点失败",
@@ -150,6 +167,32 @@ func DeleteNode(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"error":   "节点不存在",
+		})
+		return
+	}
+
+	if node.CurrentUserID != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "无法删除节点：该节点当前正被监考员占用",
+		})
+		return
+	}
+
+	// 检查是否有相关的考试记录
+	var examCount int64
+	if err := models.DB.Model(&models.Exam{}).Where("node_id = ?", c.Param("id")).Count(&examCount).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "检查关联数据失败",
+		})
+		return
+	}
+
+	if examCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   fmt.Sprintf("无法删除节点：该节点有 %d 场相关考试记录", examCount),
 		})
 		return
 	}
@@ -202,20 +245,25 @@ func UpdateNode(c *gin.Context) {
 
 func GetNodeJumpURL(c *gin.Context) {
 	session := sessions.Default(c)
-	role := session.Get("role")
+	roleVal := session.Get("role")
 	userIDVal := session.Get("user_id")
 
-	var userID uint
-	switch v := userIDVal.(type) {
-	case uint:
-		userID = v
-	case int:
-		userID = uint(v)
-	case float64:
-		userID = uint(v)
-	default:
-		// 调试日志
-		fmt.Printf("[DEBUG] userIDVal type: %T, value: %v\n", userIDVal, userIDVal)
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "user_id 类型错误",
+		})
+		return
+	}
+
+	role, ok := roleVal.(string)
+	if !ok {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "获取用户角色失败",
+		})
+		return
 	}
 
 	fmt.Printf("[DEBUG] Final userID: %d, role: %v\n", userID, role)
@@ -229,29 +277,39 @@ func GetNodeJumpURL(c *gin.Context) {
 		return
 	}
 
-	// 检查并锁定节点（监考员和管理员都需要）
-	if node.CurrentUserID != nil && *node.CurrentUserID != userID {
-		c.JSON(http.StatusForbidden, gin.H{
+	// 检查并尝试锁定节点
+	// 严密性逻辑：
+	// 1. 如果节点未被占用且状态为空闲 (status='idle')，允许抢占
+	// 2. 如果节点已经被当前用户占用，允许重入（无论 status 为何，解决刷新页面等问题）
+	var updatedNode models.Node
+	result := models.DB.Model(&updatedNode).
+		Where("id = ? AND (current_user_id = ? OR (current_user_id IS NULL AND status = ?))", c.Param("id"), userID, models.NodeStatusIdle).
+		Updates(map[string]any{
+			"current_user_id":          userID,
+			"current_user_occupied_at": time.Now(),
+		})
+
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   "该节点已被其他用户占用",
+			"error":   "锁定节点失败",
 		})
 		return
 	}
 
-	// 锁定节点，记录占用时间和用户
-	// 注意：不强制设置 status='busy'，让节点心跳返回真实的 busy/idle 状态
-	now := time.Now()
-	updates := map[string]any{
-		"current_user_id":          userID,
-		"current_user_occupied_at": now,
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "该节点已被占用或非空闲状态",
+		})
+		return
 	}
 
-	fmt.Printf("[DEBUG] Updating node %d with userID: %d\n", node.ID, userID)
-
-	if err := models.DB.Model(&node).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+	// 重新获取最新的节点信息（包括 Address 和 Token）
+	if err := models.DB.First(&node, c.Param("id")).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
-			"error":   "分配节点失败",
+			"error":   "节点不存在",
 		})
 		return
 	}
@@ -268,17 +326,25 @@ func GetNodeJumpURL(c *gin.Context) {
 // ReleaseNode 释放节点占用
 func ReleaseNode(c *gin.Context) {
 	session := sessions.Default(c)
-	role := session.Get("role")
+	roleVal := session.Get("role")
 	userIDVal := session.Get("user_id")
 
-	var userID uint
-	switch v := userIDVal.(type) {
-	case uint:
-		userID = v
-	case int:
-		userID = uint(v)
-	case float64:
-		userID = uint(v)
+	userID, ok := userIDVal.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "user_id 类型错误",
+		})
+		return
+	}
+
+	role, ok := roleVal.(string)
+	if !ok {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "获取用户角色失败",
+		})
+		return
 	}
 
 	var node models.Node
@@ -324,7 +390,10 @@ func ReleaseNode(c *gin.Context) {
 func ExportNodeConfig(c *gin.Context) {
 	var node models.Node
 	if err := models.DB.Where("id = ?", c.Param("id")).First(&node).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "节点不存在"})
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "节点不存在",
+		})
 		return
 	}
 

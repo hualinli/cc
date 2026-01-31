@@ -15,7 +15,6 @@ function switchTab(pageId, navElement) {
         'observation': '集中观测',
         'single-view': '单点观测',
         'history': '数据回溯',
-        'settings': '系统设置',
         'user-mgmt': '用户管理',
         'node-mgmt': '节点管理',
         'room-mgmt': '教室管理'
@@ -1170,20 +1169,6 @@ async function syncRooms() {
     }
 }
 
-async function syncConfig() {
-    if (!confirm('确定要同步配置信息吗？')) return;
-    try {
-        const response = await fetch('/api/sync/config', { method: 'POST' });
-        const result = await response.json();
-        if (result.success) {
-            alert('配置信息同步指令已发送');
-        } else {
-            alert('同步失败: ' + (result.error || result.message));
-        }
-    } catch (err) {
-        alert('网络请求出错');
-    }
-}
 // --- 教室管理逻辑 ---
 async function fetchRooms() {
     try {
