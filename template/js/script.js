@@ -50,9 +50,9 @@ function switchTab(pageId, navElement) {
         fetchExamsForConsole();
     }
 
-    // 集中观测页面：获取考试列表
+    // 集中观测页面：暂无初始逻辑
     if (pageId === 'observation') {
-        fetchExamsForObservation();
+        // fetchExamsForObservation 被移除
     }
 
     // 数据回溯页面
@@ -564,8 +564,130 @@ function updateGrid() {
     container.innerHTML = html;
 }
 
-function addExam(index) {
-    alert(`在窗口 ${index + 1} 添加信号源...`);
+let currentTargetBox = null;
+
+function addExam(index, isSingle = false) {
+    currentTargetBox = { index, isSingle };
+    const modal = document.getElementById('streamSelectionModal');
+    modal.style.display = 'flex';
+    loadOngoingExamsForSelection();
+}
+
+function closeStreamSelectionModal() {
+    document.getElementById('streamSelectionModal').style.display = 'none';
+    currentTargetBox = null;
+}
+
+async function loadOngoingExamsForSelection() {
+    const container = document.getElementById('ongoing-exams-list');
+    container.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 20px;">正在加载正在进行的考试...</div>';
+    
+    try {
+        const response = await fetch('/api/exams/stats');
+        const result = await response.json();
+        
+        if (!result.success) {
+            container.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 20px;">加载失败</div>';
+            return;
+        }
+
+        const exams = result.data.ongoing_exams || [];
+        if (exams.length === 0) {
+            container.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 20px;">当前没有正在进行的考试</div>';
+            return;
+        }
+
+        container.innerHTML = exams.map(exam => `
+            <div class="selection-item" onclick="selectStream(${exam.id})" style="padding: 15px; border-bottom: 1px solid #374151; cursor: pointer; display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div style="font-weight: bold; color: #fff;">${exam.subject}</div>
+                    <div style="font-size: 13px; color: #9ca3af; margin-top: 4px;">
+                        <i class="fa-solid fa-school"></i> ${exam.room ? exam.room.name : (exam.Room ? exam.Room.name : '未知')} 
+                        | <i class="fa-solid fa-server"></i> ${exam.node ? exam.node.name : (exam.Node ? exam.Node.name : '未知')}
+                    </div>
+                </div>
+                <i class="fa-solid fa-chevron-right" style="color: var(--accent-color);"></i>
+            </div>
+        `).join('');
+
+        // 简易悬停样式 (如果 CSS 没有定义)
+        const items = container.querySelectorAll('.selection-item');
+        items.forEach(item => {
+            item.onmouseover = () => item.style.backgroundColor = '#374151';
+            item.onmouseout = () => item.style.backgroundColor = 'transparent';
+        });
+
+    } catch (e) {
+        console.error("加载考试列表失败", e);
+        container.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 20px;">网络请求出错</div>';
+    }
+}
+
+async function selectStream(examId) {
+    if (!currentTargetBox) return;
+
+    try {
+        const response = await fetch('/api/exams');
+        const result = await response.json();
+        const exams = result.data || [];
+        const exam = exams.find(e => e.id == examId);
+
+        if (!exam || !exam.node) {
+            alert('找不到节点信息');
+            return;
+        }
+
+        const nodeToken = exam.node.token;
+        const nodeAddress = exam.node.address;
+        const streamUrl = `http://${nodeAddress}/stream?token=${nodeToken}`;
+
+        const { index, isSingle } = currentTargetBox;
+        let targetElement;
+        
+        if (isSingle) {
+            targetElement = document.querySelector('#single-view .monitor-grid .monitor-screen');
+        } else {
+            targetElement = document.getElementById('monitor-container').children[index];
+        }
+
+        if (targetElement) {
+            targetElement.classList.remove('add-btn');
+            // 仍然保留点击事件，方便再次切换
+            targetElement.onclick = () => addExam(index, isSingle);
+            
+            targetElement.innerHTML = `
+                <div style="width: 100%; height: 100%; position: relative; pointer-events: none;">
+                    <iframe src="${streamUrl}" style="width: 100%; height: 100%; border: none; border-radius: 8px; pointer-events: auto;"></iframe>
+                    <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); padding: 4px 8px; font-size: 11px; color: white; display: flex; justify-content: space-between; align-items: center; pointer-events: auto;">
+                        <span>${exam.room ? exam.room.name : '未知'} - ${exam.subject}</span>
+                        <i class="fa-solid fa-xmark reset-box" onclick="resetBox(event, ${index}, ${isSingle})" style="cursor: pointer; padding: 2px 5px;"></i>
+                    </div>
+                </div>
+            `;
+        }
+
+        closeStreamSelectionModal();
+    } catch (err) {
+        console.error('Select stream error:', err);
+        alert('加载考试流失败');
+    }
+}
+
+function resetBox(event, index, isSingle) {
+    if (event) event.stopPropagation();
+    
+    let targetElement;
+    if (isSingle) {
+        targetElement = document.querySelector('#single-view .monitor-grid .monitor-screen');
+    } else {
+        targetElement = document.getElementById('monitor-container').children[index];
+    }
+
+    if (targetElement) {
+        targetElement.classList.add('add-btn');
+        targetElement.onclick = () => addExam(index, isSingle);
+        targetElement.innerHTML = '<i class="fa-solid fa-plus"></i>';
+    }
 }
 
 // 初始化网格
@@ -1008,35 +1130,6 @@ async function fetchExamsForConsole() {
     }
 }
 
-// 集中观测：获取考试列表并填充下拉框
-async function fetchExamsForObservation() {
-    try {
-        // 改用 stats 接口获取真正正在进行的考试
-        const response = await fetch('/api/exams/stats');
-        if (!response.ok) throw new Error('无法获取考试列表');
-        const result = await response.json();
-        
-        if (!result.success) return;
-        
-        const ongoingExams = result.data.ongoing_exams || [];
-
-        const selector = document.getElementById('exam-selector');
-        if (!selector) return;
-        
-        selector.innerHTML = '<option value="">-- 请选择考试 --</option>';
-        ongoingExams.forEach(exam => {
-            const option = document.createElement('option');
-            option.value = exam.id;
-            // 处理嵌套结构
-            const roomName = exam.room ? exam.room.name : (exam.Room ? exam.Room.name : '-');
-            option.textContent = `${exam.subject} - ${roomName}`;
-            selector.appendChild(option);
-        });
-    } catch (err) {
-        console.error('Fetch exams error:', err);
-    }
-}
-
 // 实时观测按钮：跳到单点观测，显示节点的 /stream
 async function observeExam(examId) {
     try {
@@ -1073,42 +1166,6 @@ async function observeExam(examId) {
     } catch (err) {
         console.error('Observe exam error:', err);
         alert('获取考试信息失败');
-    }
-}
-
-// 集中观测：加载选中的考试
-async function loadSelectedExamForObservation() {
-    const examId = document.getElementById('exam-selector').value;
-    if (!examId) {
-        document.getElementById('monitor-container').innerHTML = '';
-        return;
-    }
-
-    try {
-        const response = await fetch('/api/exams');
-        if (!response.ok) throw new Error('无法获取考试详情');
-        const result = await response.json();
-        const exams = result.data || [];
-        const exam = exams.find(e => e.id == examId);
-
-        if (!exam || !exam.node) {
-            alert('找不到节点信息');
-            return;
-        }
-
-        const nodeToken = exam.node.token;
-        const nodeAddress = exam.node.address;
-        const streamUrl = `http://${nodeAddress}/stream?token=${nodeToken}`;
-
-        const container = document.getElementById('monitor-container');
-        container.innerHTML = `
-            <div class="monitor-screen" style="width: 100%; height: 100%; position: relative;">
-                <iframe src="${streamUrl}" style="width: 100%; height: 100%; border: none; border-radius: 8px;"></iframe>
-            </div>
-        `;
-    } catch (err) {
-        console.error('Load selected exam error:', err);
-        alert('加载考试流失败');
     }
 }
 

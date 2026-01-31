@@ -127,21 +127,12 @@
         </div>
 
         <div id="observation" class="page-section" style="height: 100%;">
-            <div class="card controls-bar filter-group" style="margin-bottom: 15px;">
-                <div class="input-wrap">
-                    <label><i class="fa-solid fa-video"></i> 实时监控选择</label>
-                    <select id="exam-selector" onchange="loadSelectedExamForObservation()" class="header-select">
-                        <option value="">-- 请选择考试 --</option>
-                    </select>
-                </div>
-                <button onclick="fetchExamsForObservation()" class="btn-refresh"><i class="fa-solid fa-rotate"></i> 刷新列表</button>
-            </div>
             <div class="monitor-grid" id="monitor-container"></div>
         </div>
 
         <div id="single-view" class="page-section" style="height: 100%;">
             <div class="monitor-grid" style="grid-template-columns: 1fr; grid-template-rows: 1fr;">
-                <div class="monitor-screen add-btn" onclick="addExam(0)">
+                <div class="monitor-screen add-btn" onclick="addExam(0, true)">
                     <i class="fa-solid fa-plus"></i>
                 </div>
             </div>
@@ -424,6 +415,20 @@
             <div style="display: flex; gap: 10px; margin-top: 20px;">
                 <button style="flex: 1; background: #374151;" onclick="closeRoomModal()">取消</button>
                 <button style="flex: 1;" id="modalRoomSubmitBtn" onclick="submitRoom()">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 信号源选择对话框 -->
+    <div class="modal-overlay" id="streamSelectionModal">
+        <div class="modal" style="max-width: 600px;">
+            <div class="setting-section-title">选择监考源</div>
+            <div id="ongoing-exams-list" style="max-height: 400px; overflow-y: auto; margin-bottom: 20px;">
+                <!-- 列表将通过 JS 动态填充 -->
+                <div style="text-align: center; color: #9ca3af; padding: 20px;">正在加载正在进行的考试...</div>
+            </div>
+            <div style="text-align: right;">
+                <button onclick="closeStreamSelectionModal()" style="background: #374151;">取消</button>
             </div>
         </div>
     </div>
