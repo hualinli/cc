@@ -18,7 +18,7 @@ const (
 // - LastHeartbeatAt 用于离线检测（cleanup 任务会据此把节点置为 offline）。
 type Node struct {
 	ID      uint   `gorm:"primaryKey" json:"id"`
-	Name    string `gorm:"not null;unique;index" json:"name"`                                              // 节点名称
+	Name    string `gorm:"not null;index" json:"name"`                                                     // 节点名称
 	Token   string `gorm:"not null;unique;index" json:"token"`                                             // 用于 API 鉴权
 	Model   string `gorm:"not null" json:"model"`                                                          // 节点型号
 	Address string `gorm:"not null" json:"address"`                                                        // 节点地址

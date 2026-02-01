@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-contrib/sessions"
@@ -140,13 +139,6 @@ func CreateNode(c *gin.Context) {
 	}
 
 	if err := models.DB.Create(&node).Error; err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "Duplicate entry") {
-			c.JSON(http.StatusConflict, gin.H{
-				"success": false,
-				"error":   "节点名称已存在",
-			})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "创建节点失败",
@@ -421,35 +413,10 @@ func ExportNodeConfig(c *gin.Context) {
 		})
 		return
 	}
-
-	// 自动获取控制中心的访问地址
-	// 生产环境下建议从配置文件读一个固定的外部 IP
-	ccAddr := c.Request.Host
-
-	// SECURITY WARNING: This endpoint exposes sensitive Node Tokens.
-	// In a production environment, this should be restricted to local access only,
-	// or disabled entirely after the initial setup phase.
-	//
-	// 生产环境安全建议：完成节点初始化后，建议注释掉 main.go 中的该路由，以防 Token 泄露。
-
-	// 拼接为 shell 脚本格式，方便 source
-	content := fmt.Sprintf("#!/bin/bash\n"+
-		"# Project CC Node Environment Setup\n"+
-		"# Generated at: %s\n\n"+
-		"export CC_SERVER_URL=\"http://%s\"\n"+
-		"export NODE_ID=\"%d\"\n"+
-		"export NODE_NAME=\"%s\"\n"+
-		"export NODE_TOKEN=\"%s\"\n\n"+
-		"echo \"[CC] Node environment variables have been set.\"\n",
-		time.Now().Format("2006-01-02 15:04:05"),
-		ccAddr,
-		node.ID,
-		node.Name,
-		node.Token,
-	)
+	content := fmt.Sprintf("NODE_TOKEN=%v", node.Token)
 
 	// 设置下载响应头，文件名改为 .sh
-	fileName := fmt.Sprintf("setup_node_%d.sh", node.ID)
+	fileName := ".env"
 	c.Header("Content-Disposition", "attachment; filename="+fileName)
 	c.Data(http.StatusOK, "text/x-sh", []byte(content))
 }

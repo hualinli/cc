@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -69,14 +68,6 @@ func CreateRoom(c *gin.Context) {
 	}
 
 	if err := models.DB.Create(&room).Error; err != nil {
-		// 检查是否是唯一约束违反（教室名称重复）
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "Duplicate entry") {
-			c.JSON(http.StatusConflict, gin.H{
-				"success": false,
-				"error":   "教室名称已存在",
-			})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "创建教室失败",
@@ -172,14 +163,6 @@ func UpdateRoom(c *gin.Context) {
 	}
 
 	if err := models.DB.Model(&models.Room{}).Where("id = ?", c.Param("id")).Updates(updates).Error; err != nil {
-		// 检查是否是唯一约束违反（教室名称重复）
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") || strings.Contains(err.Error(), "Duplicate entry") {
-			c.JSON(http.StatusConflict, gin.H{
-				"success": false,
-				"error":   "教室名称已存在",
-			})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "更新教室失败",
