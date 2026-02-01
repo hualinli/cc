@@ -490,11 +490,8 @@ async function refreshData() {
                         <td>${e.examinee_count || 0}</td>
                         <td><span style="color: ${e.anomalies_count > 0 ? '#ef4444' : '#10b981'}">${e.anomalies_count || 0}</span></td>
                         <td>
-                            <button class="btn-table" onclick="viewExamDetails(${e.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px;">
+                            <button class="btn-table" onclick="observeExam(${e.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px;">
                                 <i class="fa-solid fa-eye"></i> 查看
-                            </button>
-                            <button class="btn-table btn-delete" onclick="endExam(${e.id})" style="font-size: 12px; padding: 4px 8px;">
-                                <i class="fa-solid fa-stop"></i> 结束
                             </button>
                         </td>
                     </tr>
@@ -669,8 +666,8 @@ async function selectStream(examId) {
             targetElement.onclick = () => addExam(index, isSingle);
             
             targetElement.innerHTML = `
-                <div style="width: 100%; height: 100%; position: relative; pointer-events: none;">
-                    <iframe src="${streamUrl}" style="width: 100%; height: 100%; border: none; border-radius: 8px; pointer-events: auto;"></iframe>
+                <div style="width: 100%; height: 100%; position: relative; pointer-events: none; background: #000; border-radius: 8px; overflow: hidden;">
+                    <img src="${streamUrl}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: auto;">
                     <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); padding: 4px 8px; font-size: 11px; color: white; display: flex; justify-content: space-between; align-items: center; pointer-events: auto;">
                         <span>${exam.room ? exam.room.name : '未知'} - ${exam.subject}</span>
                         <i class="fa-solid fa-xmark reset-box" onclick="resetBox(event, ${index}, ${isSingle})" style="cursor: pointer; padding: 2px 5px;"></i>
@@ -1126,11 +1123,8 @@ async function fetchExamsForConsole() {
                         <td>${exam.examinee_count || 0}</td>
                         <td><span style="color: ${exam.anomalies_count > 0 ? '#ef4444' : '#10b981'}">${exam.anomalies_count || 0}</span></td>
                         <td>
-                            <button class="btn-table" onclick="viewExamDetails(${exam.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px;">
+                            <button class="btn-table" onclick="observeExam(${exam.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px;">
                                 <i class="fa-solid fa-eye"></i> 查看
-                            </button>
-                            <button class="btn-table btn-delete" onclick="endExam(${exam.id})" style="font-size: 12px; padding: 4px 8px;">
-                                <i class="fa-solid fa-stop"></i> 结束
                             </button>
                         </td>
                     `;
@@ -1146,39 +1140,14 @@ async function fetchExamsForConsole() {
 // 实时观测按钮：跳到单点观测，显示节点的 /stream
 async function observeExam(examId) {
     try {
-        const response = await fetch('/api/exams');
-        if (!response.ok) throw new Error('无法获取考试详情');
-        const result = await response.json();
-        const exams = result.data || [];
-        const exam = exams.find(e => e.id === examId);
-
-        if (!exam || !exam.node) {
-            alert('找不到节点信息');
-            return;
-        }
-
-        // 获取节点 token
-        const nodeToken = exam.node.token;
-        const nodeAddress = exam.node.address;
-        const streamUrl = `http://${nodeAddress}/stream?token=${nodeToken}`;
-
         // 跳转到单点观测，打开 stream
         switchTab('single-view', document.querySelector('[onclick*="single-view"]'));
         
-        // 创建 iframe 显示流
-        const container = document.getElementById('single-view');
-        const grid = container.querySelector('.monitor-grid');
-        grid.innerHTML = `
-            <div class="monitor-screen" style="position: relative; width: 100%; height: 100%;">
-                <iframe src="${streamUrl}" style="width: 100%; height: 100%; border: none; border-radius: 8px;"></iframe>
-                <button onclick="closeMonitor()" style="position: absolute; top: 10px; right: 10px; padding: 8px 16px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    关闭
-                </button>
-            </div>
-        `;
+        // 模拟选择信号源的行为
+        currentTargetBox = { index: 0, isSingle: true };
+        await selectStream(examId);
     } catch (err) {
         console.error('Observe exam error:', err);
-        alert('获取考试信息失败');
     }
 }
 
@@ -1187,7 +1156,7 @@ function closeMonitor() {
     const container = document.getElementById('single-view');
     const grid = container.querySelector('.monitor-grid');
     grid.innerHTML = `
-        <div class="monitor-screen add-btn" onclick="addExam(0)">
+        <div class="monitor-screen add-btn" onclick="addExam(0, true)">
             <i class="fa-solid fa-plus"></i>
         </div>
     `;

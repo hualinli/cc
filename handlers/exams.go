@@ -10,7 +10,7 @@ import (
 
 func ListExams(c *gin.Context) {
 	var exams []models.Exam
-	query := models.DB
+	query := models.DB.Preload("Room").Preload("Node")
 
 	// 过滤：按楼宇 (需要关联查询)
 	building := c.Query("building")

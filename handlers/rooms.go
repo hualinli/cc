@@ -244,7 +244,7 @@ func SyncRooms(c *gin.Context) {
 	var failures []string
 	for _, node := range nodes {
 		// 忽略离线节点或特定状态的节点？用户没说，那就全量尝试
-		nodeURL := fmt.Sprintf("http://%s/classroom?token=%s", node.Address, node.Token)
+		nodeURL := fmt.Sprintf("http://%s/classrooms?token=%s", node.Address, node.Token)
 		resp, err := client.Post(nodeURL, "application/json", bytes.NewBuffer(jsonData))
 
 		success := false
