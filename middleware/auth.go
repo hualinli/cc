@@ -55,9 +55,15 @@ func NodeAuthMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing token"})
 			return
 		}
-
 		var node models.Node
-		if err := models.DB.Where("token = ?", token).First(&node).Error; err != nil {
+		// 使用 Limit(1).Find 而不是 First 可以避免在找不到记录时触发 GORM 的错误日志
+		result := models.DB.Where("token = ?", token).Limit(1).Find(&node)
+		if result.Error != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "database error"})
+			return
+		}
+
+		if result.RowsAffected == 0 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return
 		}

@@ -133,7 +133,13 @@ async function viewExamAnomalies(examId) {
         const result = await response.json();
         const alerts = result.data || [];
 
+        // 检查是否已经存在异常弹窗
+        const existingModal = document.getElementById('anomaly-modal');
+
         if (alerts.length === 0) {
+            if (existingModal) {
+                existingModal.remove();
+            }
             alert('该考试没有异常记录');
             return;
         }
@@ -187,16 +193,23 @@ async function viewExamAnomalies(examId) {
 
         alertsHTML += `</tbody></table></div>`;
         
-        // 简单的弹窗显示（实际项目中建议使用更好的弹窗组件）
-        const modalDiv = document.createElement('div');
-        modalDiv.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 10000;';
-        modalDiv.innerHTML = `
+        const modalContent = `
             <div style="background: #1f2937; padding: 20px; border-radius: 8px; max-width: 900px; width: 90%; color: white;">
                 ${alertsHTML}
-                <button onclick="this.closest('div').parentElement.remove()" style="margin-top: 15px; padding: 8px 16px; background: var(--accent-color); color: white; border: none; border-radius: 4px; cursor: pointer;">关闭</button>
+                <button onclick="document.getElementById('anomaly-modal').remove()" style="margin-top: 15px; padding: 8px 16px; background: var(--accent-color); color: white; border: none; border-radius: 4px; cursor: pointer;">关闭</button>
             </div>
         `;
-        document.body.appendChild(modalDiv);
+
+        if (existingModal) {
+            existingModal.innerHTML = modalContent;
+        } else {
+            // 简单的弹窗显示（实际项目中建议使用更好的弹窗组件）
+            const modalDiv = document.createElement('div');
+            modalDiv.id = 'anomaly-modal';
+            modalDiv.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+            modalDiv.innerHTML = modalContent;
+            document.body.appendChild(modalDiv);
+        }
     } catch (e) {
         console.error("获取异常记录失败", e);
         alert('获取异常记录失败');
