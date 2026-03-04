@@ -1009,6 +1009,7 @@ function openNodeModal(mode, nodeData = null) {
     document.getElementById('modalNodeName').value = '';
     document.getElementById('modalNodeModel').value = '';
     document.getElementById('modalNodeAddress').value = '';
+    document.getElementById('tokenRow').style.display = 'none';
 
     if (mode === 'add') {
         title.innerText = '新增节点';
@@ -1022,6 +1023,8 @@ function openNodeModal(mode, nodeData = null) {
         document.getElementById('modalNodeName').value = nodeData.name;
         document.getElementById('modalNodeModel').value = nodeData.model;
         document.getElementById('modalNodeAddress').value = nodeData.address;
+        document.getElementById('modalNodeToken').value = nodeData.token;
+        document.getElementById('tokenRow').style.display = 'flex';
     }
 
     modal.style.display = 'flex';
@@ -1029,6 +1032,35 @@ function openNodeModal(mode, nodeData = null) {
 
 function closeNodeModal() {
     document.getElementById('nodeModal').style.display = 'none';
+}
+
+function copyToken() {
+    const tokenInput = document.getElementById('modalNodeToken');
+    const toast = document.getElementById('copyToast');
+    
+    tokenInput.select();
+    tokenInput.setSelectionRange(0, 99999);
+
+    navigator.clipboard.writeText(tokenInput.value).then(() => {
+        showCopyToast(toast);
+    }).catch(err => {
+        console.error('无法复制: ', err);
+        try {
+            document.execCommand('copy');
+            showCopyToast(toast);
+        } catch (e) {
+            console.error('复制失败');
+        }
+    });
+}
+
+function showCopyToast(toast) {
+    if (!toast) return;
+    toast.style.display = 'block';
+    // 2秒后由于 CSS 动画会消失，这里简单重置 display
+    setTimeout(() => {
+        toast.style.display = 'none';
+    }, 2000);
 }
 
 async function submitNode() {
