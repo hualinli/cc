@@ -269,6 +269,16 @@ func GetNodeJumpURL(c *gin.Context) {
 		return
 	}
 
+	// 如果是管理员，直接返回跳转 URL，不修改占用状态
+	if role == "admin" {
+		url := fmt.Sprintf("http://%s?token=%s", node.Address, node.Token)
+		c.JSON(http.StatusOK, gin.H{
+			"success":  true,
+			"jump_url": url,
+		})
+		return
+	}
+
 	// 检查并尝试锁定节点
 	// 严密性逻辑：
 	// 1. 如果节点未被占用且状态为空闲 (status='idle')，允许抢占
