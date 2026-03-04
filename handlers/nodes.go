@@ -403,20 +403,3 @@ func GetNodeStats(c *gin.Context) {
 		},
 	})
 }
-
-func ExportNodeConfig(c *gin.Context) {
-	var node models.Node
-	if err := models.DB.Where("id = ?", c.Param("id")).First(&node).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"success": false,
-			"error":   "节点不存在",
-		})
-		return
-	}
-	content := fmt.Sprintf("NODE_TOKEN=%v", node.Token)
-
-	// 设置下载响应头，文件名改为 .sh
-	fileName := ".env"
-	c.Header("Content-Disposition", "attachment; filename="+fileName)
-	c.Data(http.StatusOK, "text/x-sh", []byte(content))
-}
