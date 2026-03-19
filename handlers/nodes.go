@@ -117,23 +117,28 @@ func CreateNode(c *gin.Context) {
 	type Input struct {
 		Name    string `json:"name" binding:"required"`
 		Model   string `json:"model" binding:"required"`
-		Address string `json:"address" binding:"required"`
+		Address string `json:"address"` // 可选，不填则等待心跳自动上报
 	}
 
 	var input Input
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "输入错误：请填写必填字段",
+			"error":   "输入错误：请检查参数",
 		})
 		return
+	}
+
+	address := input.Address
+	if address == "" {
+		address = "waiting_for_heartbeat"
 	}
 
 	node := models.Node{
 		Name:    input.Name,
 		Token:   generateToken(),
 		Model:   input.Model,
-		Address: input.Address,
+		Address: address,
 		Status:  models.NodeStatusIdle,
 		Version: "1.0.0",
 	}

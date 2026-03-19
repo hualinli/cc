@@ -1069,7 +1069,7 @@ async function submitNode() {
     const model = document.getElementById('modalNodeModel').value;
     const address = document.getElementById('modalNodeAddress').value;
 
-    if (!name || !model || !address) {
+    if (!name || !model) {
         alert("请填写完整信息");
         return;
     }

@@ -44,6 +44,7 @@ func NodeHeartbeat(c *gin.Context) {
 	// 更新数据库状态
 	updateData := map[string]any{
 		"last_heartbeat_at": time.Now(),
+		"address":           c.ClientIP() + ":8002", // 心跳时自动更新节点地址为当前请求的 IP 和默认端口
 	}
 
 	// 心跳时更新节点的真实状态（idle/busy/error）

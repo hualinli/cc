@@ -21,7 +21,7 @@ type Node struct {
 	Name    string `gorm:"not null;index" json:"name"`                                                     // 节点名称
 	Token   string `gorm:"not null;unique;index" json:"token"`                                             // 用于 API 鉴权
 	Model   string `gorm:"not null" json:"model"`                                                          // 节点型号
-	Address string `gorm:"not null" json:"address"`                                                        // 节点地址
+	Address string `gorm:"index" json:"address"`                                                           // 节点地址 (心跳时自动更新 IP:PORT)
 	Status  string `gorm:"not null;index;check:status IN ('idle','offline','busy','error')" json:"status"` // idle, offline, busy, error
 	Version string `gorm:"not null" json:"version"`                                                        // 软件版本
 
