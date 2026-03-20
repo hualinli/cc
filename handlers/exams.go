@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"cc/models"
+	"cc/tasks"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,7 +13,7 @@ import (
 
 func ListExams(c *gin.Context) {
 	var exams []models.Exam
-	query := models.DB.Preload("Room").Preload("Node")
+	query := models.DB.Preload("Room").Preload("Node").Preload("User")
 
 	// 过滤：按楼宇 (需要关联查询)
 	building := c.Query("building")
@@ -58,39 +61,45 @@ func GetExams(c *gin.Context) {
 	models.DB.Model(&models.Alert{}).Where("exam_id = ?", exam.ID).Count(&anomaliesCount)
 
 	type ExamResponse struct {
-		ID             uint         `json:"id"`
-		Name           string       `json:"name"`
-		Subject        string       `json:"subject"`
-		RoomID         uint         `json:"room_id"`
-		NodeID         uint         `json:"node_id"`
-		UserID         uint         `json:"user_id"`
-		StartTime      time.Time    `json:"start_time"`
-		EndTime        *time.Time   `json:"end_time"`
-		ExamineeCount  int          `json:"examinee_count"`
-		CreatedAt      time.Time    `json:"created_at"`
-		UpdatedAt      time.Time    `json:"updated_at"`
-		Room           *models.Room `json:"room,omitempty"`
-		Node           *models.Node `json:"node,omitempty"`
-		User           *models.User `json:"user,omitempty"`
-		AnomaliesCount int64        `json:"anomalies_count"`
+		ID              uint         `json:"id"`
+		Name            string       `json:"name"`
+		Subject         string       `json:"subject"`
+		RoomID          uint         `json:"room_id"`
+		NodeID          *uint        `json:"node_id"`
+		UserID          uint         `json:"user_id"`
+		DurationSeconds int          `json:"duration_seconds"`
+		StartTime       time.Time    `json:"start_time"`
+		EndTime         *time.Time   `json:"end_time"`
+		ExamineeCount   int          `json:"examinee_count"`
+		ScheduleStatus  string       `json:"schedule_status"`
+		ScheduleError   string       `json:"schedule_error,omitempty"`
+		CreatedAt       time.Time    `json:"created_at"`
+		UpdatedAt       time.Time    `json:"updated_at"`
+		Room            *models.Room `json:"room,omitempty"`
+		Node            *models.Node `json:"node,omitempty"`
+		User            *models.User `json:"user,omitempty"`
+		AnomaliesCount  int64        `json:"anomalies_count"`
 	}
 
 	response := ExamResponse{
-		ID:             exam.ID,
-		Name:           exam.Name,
-		Subject:        exam.Subject,
-		RoomID:         exam.RoomID,
-		NodeID:         exam.NodeID,
-		UserID:         exam.UserID,
-		StartTime:      exam.StartTime,
-		EndTime:        exam.EndTime,
-		ExamineeCount:  exam.ExamineeCount,
-		CreatedAt:      exam.CreatedAt,
-		UpdatedAt:      exam.UpdatedAt,
-		Room:           exam.Room,
-		Node:           exam.Node,
-		User:           exam.User,
-		AnomaliesCount: anomaliesCount,
+		ID:              exam.ID,
+		Name:            exam.Name,
+		Subject:         exam.Subject,
+		RoomID:          exam.RoomID,
+		NodeID:          exam.NodeID,
+		UserID:          exam.UserID,
+		DurationSeconds: exam.DurationSeconds,
+		StartTime:       exam.StartTime,
+		EndTime:         exam.EndTime,
+		ExamineeCount:   exam.ExamineeCount,
+		ScheduleStatus:  exam.ScheduleStatus,
+		ScheduleError:   exam.ScheduleError,
+		CreatedAt:       exam.CreatedAt,
+		UpdatedAt:       exam.UpdatedAt,
+		Room:            exam.Room,
+		Node:            exam.Node,
+		User:            exam.User,
+		AnomaliesCount:  anomaliesCount,
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": response})
@@ -98,14 +107,97 @@ func GetExams(c *gin.Context) {
 
 // CreateExam 创建新考试
 func CreateExam(c *gin.Context) {
-	var exam models.Exam
-	if err := c.ShouldBindJSON(&exam); err != nil {
+	var input struct {
+		Name            string     `json:"name"`
+		Subject         string     `json:"subject"`
+		RoomID          uint       `json:"room_id"`
+		NodeID          *uint      `json:"node_id"`
+		UserID          uint       `json:"user_id"`
+		StartTime       time.Time  `json:"start_time"`
+		EndTime         *time.Time `json:"end_time"`
+		DurationSeconds int        `json:"duration_seconds"`
+		DurationMinutes int        `json:"duration_minutes"`
+		ExamineeCount   int        `json:"examinee_count"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "请求参数错误"})
 		return
 	}
 
+	if strings.TrimSpace(input.Subject) == "" || input.RoomID == 0 || input.UserID == 0 || input.StartTime.IsZero() {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "缺少必要参数: subject, room_id, user_id, start_time"})
+		return
+	}
+	durationSeconds := input.DurationSeconds
+	if durationSeconds <= 0 && input.DurationMinutes > 0 {
+		durationSeconds = input.DurationMinutes * 60
+	}
+	if durationSeconds <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "duration_seconds 必须大于 0"})
+		return
+	}
+
+	if err := models.DB.First(&models.Room{}, input.RoomID).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "room_id 无效"})
+		return
+	}
+	if err := models.DB.First(&models.User{}, input.UserID).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "user_id 无效"})
+		return
+	}
+	if input.NodeID != nil {
+		if err := models.DB.First(&models.Node{}, *input.NodeID).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "node_id 无效"})
+			return
+		}
+	}
+
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		name = strings.TrimSpace(input.Subject) + "考试"
+	}
+
+	exam := models.Exam{
+		Name:            name,
+		Subject:         strings.TrimSpace(input.Subject),
+		RoomID:          input.RoomID,
+		NodeID:          input.NodeID,
+		UserID:          input.UserID,
+		StartTime:       input.StartTime,
+		EndTime:         input.EndTime,
+		DurationSeconds: durationSeconds,
+		ExamineeCount:   input.ExamineeCount,
+		ScheduleStatus:  models.ExamSchedulePending,
+	}
+	if input.NodeID != nil {
+		exam.ScheduleStatus = models.ExamScheduleAssigned
+	}
+
 	if err := models.DB.Create(&exam).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "创建考试失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": exam})
+}
+
+// RetryAssignAndNotifyExam 管理员手动重试考试分配与通知
+func RetryAssignAndNotifyExam(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "无效的考试ID"})
+		return
+	}
+
+	if err := tasks.RetryScheduleExam(uint(id)); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "重试失败: " + err.Error()})
+		return
+	}
+
+	var exam models.Exam
+	if err := models.DB.Preload("Room").Preload("Node").Preload("User").First(&exam, uint(id)).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "考试不存在"})
 		return
 	}
 

@@ -63,8 +63,48 @@ func setupExamRouter() *gin.Engine {
 	r.DELETE("/exams/:id", handlers.DeleteExam)
 	r.PUT("/exams/:id", handlers.UpdateExam)
 	r.GET("/exams/stats", handlers.GetExamStats)
+	r.POST("/exams/:id/retry-schedule", handlers.RetryAssignAndNotifyExam)
 
 	return r
+}
+
+func TestCreateExamWithoutNode(t *testing.T) {
+	db := setupTestDBForExamHandlers(t)
+	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+
+	router := setupExamRouter()
+
+	examData := map[string]interface{}{
+		"name":             "Test Exam No Node",
+		"subject":          "Math",
+		"room_id":          1,
+		"user_id":          1,
+		"start_time":       time.Now(),
+		"duration_seconds": 3600,
+		"examinee_count":   40,
+	}
+	jsonData, _ := json.Marshal(examData)
+
+	req, _ := http.NewRequest("POST", "/exams", bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", w.Code)
+	}
+
+	var created models.Exam
+	if err := db.Where("name = ?", "Test Exam No Node").First(&created).Error; err != nil {
+		t.Fatalf("expected created exam: %v", err)
+	}
+	if created.NodeID != nil {
+		t.Errorf("expected node_id to be nil")
+	}
+	if created.ScheduleStatus != models.ExamSchedulePending {
+		t.Errorf("expected schedule status pending, got %s", created.ScheduleStatus)
+	}
 }
 
 func TestCreateExam(t *testing.T) {
@@ -74,14 +114,15 @@ func TestCreateExam(t *testing.T) {
 	router := setupExamRouter()
 
 	examData := map[string]interface{}{
-		"name":           "Test Exam",
-		"subject":        "Math",
-		"room_id":        1,
-		"node_id":        1,
-		"user_id":        1,
-		"start_time":     time.Now(),
-		"end_time":       nil,
-		"examinee_count": 50,
+		"name":             "Test Exam",
+		"subject":          "Math",
+		"room_id":          1,
+		"node_id":          1,
+		"user_id":          1,
+		"start_time":       time.Now(),
+		"duration_seconds": 7200,
+		"end_time":         nil,
+		"examinee_count":   50,
 	}
 	jsonData, _ := json.Marshal(examData)
 
@@ -107,14 +148,16 @@ func TestListExams(t *testing.T) {
 	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
 
 	// Create a test exam
+	nodeID := uint(1)
 	exam := models.Exam{
-		Name:          "Test Exam",
-		Subject:       "Math",
-		RoomID:        1,
-		NodeID:        1,
-		UserID:        1,
-		StartTime:     time.Now(),
-		ExamineeCount: 50,
+		Name:            "Test Exam",
+		Subject:         "Math",
+		RoomID:          1,
+		NodeID:          &nodeID,
+		UserID:          1,
+		DurationSeconds: 7200,
+		StartTime:       time.Now(),
+		ExamineeCount:   50,
 	}
 	db.Create(&exam)
 
@@ -144,6 +187,18 @@ func TestListExams(t *testing.T) {
 	if len(data) != 1 {
 		t.Errorf("Expected 1 exam, got %d", len(data))
 	}
+
+	examObj, ok := data[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected exam object, got %T", data[0])
+	}
+	userObj, ok := examObj["user"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected user relation in exam list response, got %T", examObj["user"])
+	}
+	if username, ok := userObj["username"].(string); !ok || username != "testuser" {
+		t.Fatalf("Expected user.username=testuser, got %v", userObj["username"])
+	}
 }
 
 func TestGetExams(t *testing.T) {
@@ -151,14 +206,16 @@ func TestGetExams(t *testing.T) {
 	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
 
 	// Create a test exam
+	nodeID := uint(1)
 	exam := models.Exam{
-		Name:          "Test Exam",
-		Subject:       "Math",
-		RoomID:        1,
-		NodeID:        1,
-		UserID:        1,
-		StartTime:     time.Now(),
-		ExamineeCount: 50,
+		Name:            "Test Exam",
+		Subject:         "Math",
+		RoomID:          1,
+		NodeID:          &nodeID,
+		UserID:          1,
+		DurationSeconds: 7200,
+		StartTime:       time.Now(),
+		ExamineeCount:   50,
 	}
 	db.Create(&exam)
 
@@ -185,14 +242,16 @@ func TestUpdateExam(t *testing.T) {
 	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
 
 	// Create a test exam
+	nodeID := uint(1)
 	exam := models.Exam{
-		Name:          "Test Exam",
-		Subject:       "Math",
-		RoomID:        1,
-		NodeID:        1,
-		UserID:        1,
-		StartTime:     time.Now(),
-		ExamineeCount: 50,
+		Name:            "Test Exam",
+		Subject:         "Math",
+		RoomID:          1,
+		NodeID:          &nodeID,
+		UserID:          1,
+		DurationSeconds: 7200,
+		StartTime:       time.Now(),
+		ExamineeCount:   50,
 	}
 	db.Create(&exam)
 
@@ -225,14 +284,16 @@ func TestDeleteExam(t *testing.T) {
 	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
 
 	// Create a test exam
+	nodeID := uint(1)
 	exam := models.Exam{
-		Name:          "Test Exam",
-		Subject:       "Math",
-		RoomID:        1,
-		NodeID:        1,
-		UserID:        1,
-		StartTime:     time.Now(),
-		ExamineeCount: 50,
+		Name:            "Test Exam",
+		Subject:         "Math",
+		RoomID:          1,
+		NodeID:          &nodeID,
+		UserID:          1,
+		DurationSeconds: 7200,
+		StartTime:       time.Now(),
+		ExamineeCount:   50,
 	}
 	db.Create(&exam)
 
@@ -259,14 +320,16 @@ func TestGetExamStats(t *testing.T) {
 	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
 
 	// Create a test exam first to get its ID
+	nodeID := uint(2)
 	exam := models.Exam{
-		Name:          "Test Exam",
-		Subject:       "Math",
-		RoomID:        1,
-		NodeID:        2,
-		UserID:        1,
-		StartTime:     time.Now(),
-		ExamineeCount: 50,
+		Name:            "Test Exam",
+		Subject:         "Math",
+		RoomID:          1,
+		NodeID:          &nodeID,
+		UserID:          1,
+		DurationSeconds: 7200,
+		StartTime:       time.Now(),
+		ExamineeCount:   50,
 	}
 	db.Create(&exam)
 

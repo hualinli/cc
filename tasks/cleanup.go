@@ -55,13 +55,11 @@ func cleanupStaleNodes() {
 // cleanupStaleExams 处理由于节点掉线或状态同步异常（如节点重启变为 idle）未正常结束的任务
 func cleanupStaleExams() {
 	var exams []models.Exam
-	// 找到所有未结束（end_time 为 NULL）且：
-	// 1. 所属节点已离线
-	// 2. 所属节点返回状态为 idle（说明节点侧考试已停止，但管控中心未收到 stop 通信）
-	// 3. 所属节点处于 error 状态
+	// 找到所有“运行中且未结束（end_time 为 NULL）”并且所属节点已离线/异常的考试。
+	// 注意：不再以 Node=idle 作为自动关考条件，避免推送开考后被心跳短暂回报 idle 误关考。
 	err := models.DB.Joins("Node").
-		Where("exams.end_time IS NULL AND (Node.status = ? OR Node.status = ? OR Node.status = ?)",
-			models.NodeStatusOffline, models.NodeStatusIdle, models.NodeStatusError).
+		Where("exams.end_time IS NULL AND exams.schedule_status = ? AND (Node.status = ? OR Node.status = ?)",
+			models.ExamScheduleRunning, models.NodeStatusOffline, models.NodeStatusError).
 		Find(&exams).Error
 
 	if err != nil {
@@ -72,13 +70,15 @@ func cleanupStaleExams() {
 	for _, exam := range exams {
 		// 标记结束时间为当前时间
 		models.DB.Model(&exam).Update("end_time", time.Now())
-		log.Printf("[Cleanup] Auto-closed stale exam %d (subject: %s) due to node status mismatch or offline", exam.ID, exam.Subject)
+		log.Printf("[Cleanup] Auto-closed stale running exam %d (subject: %s) due to node offline/error", exam.ID, exam.Subject)
 
 		// 确保节点关联也被清空
-		models.DB.Model(&models.Node{}).Where("id = ?", exam.NodeID).Updates(map[string]any{
-			"current_exam_id":          nil,
-			"current_user_id":          nil,
-			"current_user_occupied_at": nil,
-		})
+		if exam.NodeID != nil {
+			models.DB.Model(&models.Node{}).Where("id = ?", *exam.NodeID).Updates(map[string]any{
+				"current_exam_id":          nil,
+				"current_user_id":          nil,
+				"current_user_occupied_at": nil,
+			})
+		}
 	}
 }

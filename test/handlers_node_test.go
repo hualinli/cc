@@ -190,11 +190,12 @@ func TestDeleteNodeWithExam(t *testing.T) {
 	db.Create(&node)
 
 	// Create test exam that references the node
+	nodeID := node.ID
 	exam := models.Exam{
 		Name:    "Test Exam",
 		Subject: "Math",
 		RoomID:  1,
-		NodeID:  node.ID,
+		NodeID:  &nodeID,
 		UserID:  1,
 	}
 	db.Create(&exam)

@@ -60,11 +60,12 @@ func TestAlertInsert(t *testing.T) {
 
 	startTime := time.Now()
 	endTime := startTime.Add(2 * time.Hour)
+	nodeID := node.ID
 	exam := models.Exam{
 		Name:          "Math Exam",
 		Subject:       "Mathematics",
 		RoomID:        room.ID,
-		NodeID:        node.ID,
+		NodeID:        &nodeID,
 		UserID:        user.ID,
 		StartTime:     startTime,
 		EndTime:       &endTime,

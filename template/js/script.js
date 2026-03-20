@@ -15,6 +15,7 @@ function switchTab(pageId, navElement) {
         'observation': '集中观测',
         'single-view': '单点观测',
         'history': '数据回溯',
+        'exam-mgmt': '考试管理',
         'user-mgmt': '用户管理',
         'node-mgmt': '节点管理',
         'room-mgmt': '教室管理'
@@ -61,6 +62,10 @@ function switchTab(pageId, navElement) {
         fetchHistory();
     }
 
+    if (pageId === 'exam-mgmt') {
+        fetchExamManagement();
+    }
+
     // 只有在控制台页面才调整图表大小
     if (pageId === 'console') {
         setTimeout(() => {
@@ -71,6 +76,54 @@ function switchTab(pageId, navElement) {
 }
 
 let allHistoryRooms = [];
+
+function formatScheduleStatus(status) {
+    const mapping = {
+        pending: { text: '待分配', color: '#9ca3af' },
+        assigned: { text: '已分配待通知', color: '#06b6d4' },
+        notified: { text: '已通知', color: '#22c55e' },
+        running: { text: '进行中', color: '#10b981' },
+        assign_failed: { text: '分配失败', color: '#ef4444' },
+        notify_failed: { text: '通知失败', color: '#f59e0b' }
+    };
+    return mapping[status] || { text: status || '未知', color: '#9ca3af' };
+}
+
+function getExamMgmtState(exam) {
+    if (exam?.end_time) return 'completed';
+    const status = exam?.schedule_status;
+    if (status === 'running') return 'started';
+    if (status === 'pending') return 'unassigned';
+    if (status === 'assign_failed' || status === 'notify_failed') return 'failed';
+    if (status === 'assigned' || status === 'notified') return 'not_started';
+    return 'not_started';
+}
+
+function formatExamMgmtState(state) {
+    const mapping = {
+        started: { text: '已开始', color: '#10b981' },
+        not_started: { text: '未开始', color: '#06b6d4' },
+        unassigned: { text: '未分配', color: '#9ca3af' },
+        failed: { text: '分配失败', color: '#ef4444' }
+    };
+    return mapping[state] || { text: '未开始', color: '#06b6d4' };
+}
+
+function formatDurationMinutes(seconds) {
+    const sec = Number(seconds || 0);
+    if (sec <= 0) return '-';
+    return Number.isInteger(sec / 60) ? String(sec / 60) : (sec / 60).toFixed(1);
+}
+
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
 
 async function fetchHistory() {
     try {
@@ -88,13 +141,13 @@ async function fetchHistory() {
 
         const response = await fetch(`/api/exams?${params.toString()}`);
         const result = await response.json();
-        const exams = result.data || [];
+        const exams = (result.data || []).filter(e => !!e.end_time);
 
         const tbody = document.querySelector('#history tbody');
         tbody.innerHTML = '';
         
         if (exams.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">暂无记录</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">暂无已结束考试记录</td></tr>';
             return;
         }
 
@@ -103,7 +156,6 @@ async function fetchHistory() {
             const alertResponse = await fetch(`/api/alerts?exam_id=${e.id}`);
             const alertResult = await alertResponse.json();
             const anomalyCount = alertResult.data ? alertResult.data.length : 0;
-
             const tr = `
                 <tr>
                     <td>EXP-${e.id}</td>
@@ -123,6 +175,193 @@ async function fetchHistory() {
         }
     } catch (e) {
         console.error("获取记录失败", e);
+    }
+}
+
+async function fetchExamManagement() {
+    try {
+        const subject = document.getElementById('exam-mgmt-subject')?.value || '';
+        const status = document.getElementById('exam-mgmt-status')?.value || '';
+        const date = document.getElementById('exam-mgmt-date')?.value || '';
+
+        const params = new URLSearchParams();
+        if (subject) params.append('subject', subject);
+        if (date) params.append('date', date);
+
+        const response = await fetch(`/api/exams?${params.toString()}`);
+        const result = await response.json();
+        let exams = (result.data || []).filter(e => !e.end_time);
+
+        if (status) {
+            exams = exams.filter(e => getExamMgmtState(e) === status);
+        }
+
+        const tbody = document.getElementById('exam-mgmt-body');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        if (exams.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted);">暂无考试数据</td></tr>';
+            return;
+        }
+
+        exams.forEach(e => {
+            const mgmtState = getExamMgmtState(e);
+            const schedule = formatExamMgmtState(mgmtState);
+            const canRetry = ['unassigned', 'not_started', 'failed'].includes(mgmtState);
+            const canDelete = true;
+            const tr = `
+                <tr>
+                    <td>EXP-${e.id}</td>
+                    <td>${escapeHtml(e.name || '-')}</td>
+                    <td>${escapeHtml(e.subject || '-')}</td>
+                    <td>${escapeHtml(e.room?.name || '-')}</td>
+                    <td>${escapeHtml(e.user?.username || '-')}</td>
+                    <td>${e.start_time ? new Date(e.start_time).toLocaleString() : '-'}</td>
+                    <td>${formatDurationMinutes(e.duration_seconds)}</td>
+                    <td>${escapeHtml(e.node?.name || '-')}</td>
+                    <td><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;background:${schedule.color}22;color:${schedule.color};border:1px solid ${schedule.color}55;">${schedule.text}</span></td>
+                    <td title="${escapeHtml(e.schedule_error || '')}" style="max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(e.schedule_error || '-')}</td>
+                    <td>
+                        ${canRetry ? `<button class="btn-table" onclick="retryScheduleExam(${e.id})" style="background: var(--warning-color); color: white; margin-right: 6px;"><i class="fa-solid fa-rotate-right"></i> 重试</button>` : ''}
+                        ${canDelete ? `<button class="btn-table btn-delete" onclick="deleteExam(${e.id})"><i class="fa-solid fa-trash"></i> 删除</button>` : ''}
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += tr;
+        });
+    } catch (e) {
+        console.error('Fetch exam management failed', e);
+    }
+}
+
+async function retryScheduleExam(examId) {
+    if (!confirm('确定要重试该考试的分配与开考通知吗？')) return;
+
+    try {
+        const response = await fetch(`/api/exams/${examId}/retry-schedule`, { method: 'POST' });
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+            alert('重试调度成功');
+            fetchHistory();
+            fetchExamManagement();
+            fetchExamsForConsole();
+        } else {
+            alert(result.error || '重试调度失败');
+        }
+    } catch (e) {
+        console.error('Retry schedule error', e);
+        alert('网络请求出错');
+    }
+}
+
+async function loadExamFormOptions() {
+    const roomSelect = document.getElementById('modalExamRoom');
+    const userSelect = document.getElementById('modalExamUser');
+    const nodeSelect = document.getElementById('modalExamNode');
+
+    roomSelect.innerHTML = '<option value="">加载中...</option>';
+    userSelect.innerHTML = '<option value="">加载中...</option>';
+    nodeSelect.innerHTML = '<option value="">加载中...</option>';
+
+    try {
+        const [roomsResp, usersResp, nodesResp] = await Promise.all([
+            fetch('/api/rooms'),
+            fetch('/api/users'),
+            fetch('/api/nodes')
+        ]);
+
+        const roomsResult = await roomsResp.json();
+        const usersResult = await usersResp.json();
+        const nodesResult = await nodesResp.json();
+
+        const rooms = roomsResult.data || [];
+        const users = usersResult.data || [];
+        const nodes = nodesResult.data || [];
+
+        roomSelect.innerHTML = rooms.length
+            ? rooms.map(r => `<option value="${r.id}">${escapeHtml(r.building)} / ${escapeHtml(r.name)}</option>`).join('')
+            : '<option value="">暂无教室</option>';
+
+        userSelect.innerHTML = users.length
+            ? users.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (${u.role === 'admin' ? '管理员' : '监考员'})</option>`).join('')
+            : '<option value="">暂无用户</option>';
+
+        const availableNodes = nodes.filter(n => n.status === 'idle' && !n.current_user_id);
+        nodeSelect.innerHTML = `<option value="">到点自动分配</option>${availableNodes
+            .map(n => `<option value="${n.id}">${escapeHtml(n.name)} (${escapeHtml(n.address || '-')})</option>`)
+            .join('')}`;
+    } catch (e) {
+        console.error('Load exam form options failed', e);
+        roomSelect.innerHTML = '<option value="">加载失败</option>';
+        userSelect.innerHTML = '<option value="">加载失败</option>';
+        nodeSelect.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+function openExamModal() {
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+
+    document.getElementById('modalExamName').value = '';
+    document.getElementById('modalExamSubject').value = '';
+    document.getElementById('modalExamStartTime').value = now.toISOString().slice(0, 16);
+    document.getElementById('modalExamDurationMinutes').value = '120';
+
+    loadExamFormOptions();
+    document.getElementById('examModal').style.display = 'flex';
+}
+
+function closeExamModal() {
+    document.getElementById('examModal').style.display = 'none';
+}
+
+async function submitExam() {
+    const name = document.getElementById('modalExamName').value.trim();
+    const subject = document.getElementById('modalExamSubject').value.trim();
+    const startTime = document.getElementById('modalExamStartTime').value;
+    const durationMinutes = Number(document.getElementById('modalExamDurationMinutes').value);
+    const roomId = Number(document.getElementById('modalExamRoom').value);
+    const userId = Number(document.getElementById('modalExamUser').value);
+    const nodeVal = document.getElementById('modalExamNode').value;
+
+    if (!subject || !startTime || !durationMinutes || !roomId || !userId) {
+        alert('请填写完整的必填项');
+        return;
+    }
+
+    const payload = {
+        name,
+        subject,
+        room_id: roomId,
+        user_id: userId,
+        start_time: new Date(startTime).toISOString(),
+        duration_seconds: Math.round(durationMinutes * 60)
+    };
+    if (nodeVal) {
+        payload.node_id = Number(nodeVal);
+    }
+
+    try {
+        const response = await fetch('/api/exams', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+            alert('考试创建成功');
+            closeExamModal();
+            fetchHistory();
+            fetchExamManagement();
+        } else {
+            alert(result.error || '创建考试失败');
+        }
+    } catch (e) {
+        console.error('Create exam failed', e);
+        alert('网络请求出错');
     }
 }
 
@@ -227,6 +466,7 @@ async function deleteExam(examId) {
         if (response.ok && result.success) {
             alert('删除成功');
             fetchHistory();
+            fetchExamManagement();
         } else {
             alert(result.error || '删除失败');
         }

@@ -65,7 +65,10 @@ func EnsureSQLiteIndexes(db *gorm.DB) error {
 
 	// 业务约束：同一节点同一时刻仅允许一场“进行中考试”。
 	// end_time 为 NULL 表示进行中。
-	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_exams_node_active ON exams(node_id) WHERE end_time IS NULL;").Error; err != nil {
+	if err := db.Exec("DROP INDEX IF EXISTS idx_exams_node_active;").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_exams_node_active ON exams(node_id) WHERE end_time IS NULL AND node_id IS NOT NULL;").Error; err != nil {
 		return err
 	}
 

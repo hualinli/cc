@@ -15,6 +15,7 @@ import (
 func main() {
 	models.Init()
 	tasks.StartCleanupTask()
+	tasks.StartExamScheduler()
 	r := gin.Default()
 
 	store := cookie.NewStore([]byte("secret-key"))
@@ -118,6 +119,7 @@ func main() {
 			adminAPI.POST("/exams", handlers.CreateExam)
 			adminAPI.PUT("/exams/:id", handlers.UpdateExam)
 			adminAPI.DELETE("/exams/:id", handlers.DeleteExam)
+			adminAPI.POST("/exams/:id/retry-schedule", handlers.RetryAssignAndNotifyExam)
 
 			// 异常管理（完整CRUD）
 			adminAPI.GET("/alerts", handlers.ListAlerts)

@@ -46,12 +46,13 @@ func setupTestDBForAlertHandlers(t *testing.T) *gorm.DB {
 		Version: "1.0.0",
 	}
 	db.Create(&node)
+	nodeID := node.ID
 
 	exam := models.Exam{
 		Name:          "Test Exam",
 		Subject:       "Math",
 		RoomID:        room.ID,
-		NodeID:        node.ID,
+		NodeID:        &nodeID,
 		UserID:        user.ID,
 		StartTime:     time.Now(),
 		ExamineeCount: 50,

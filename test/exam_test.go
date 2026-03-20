@@ -61,23 +61,25 @@ func TestExamInsert(t *testing.T) {
 	// Insert test exams
 	startTime := time.Now()
 	endTime := startTime.Add(2 * time.Hour)
+	nodeID := node.ID
 
 	exam1 := models.Exam{
 		Name:          "Math Exam",
 		Subject:       "Mathematics",
 		RoomID:        room.ID,
-		NodeID:        node.ID,
+		NodeID:        &nodeID,
 		UserID:        user.ID,
 		StartTime:     startTime,
 		EndTime:       &endTime,
 		ExamineeCount: 30,
 	}
 
+	nodeID2 := node.ID
 	exam2 := models.Exam{
 		Name:          "English Exam",
 		Subject:       "English",
 		RoomID:        room.ID,
-		NodeID:        node.ID,
+		NodeID:        &nodeID2,
 		UserID:        user.ID,
 		StartTime:     startTime.Add(24 * time.Hour),
 		EndTime:       nil,
