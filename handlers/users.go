@@ -113,11 +113,20 @@ func UpdateUser(c *gin.Context) {
 
 	// 如果包含密码字段，需要手动进行 Bcrypt 加密
 	if pwd, ok := input["password"].(string); ok && pwd != "" {
-		hashed, _ := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+		hashed, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "密码加密失败",
+			})
+			return
+		}
 		input["password"] = string(hashed)
 	}
 
-	if err := models.DB.Model(&models.User{}).Where("id = ?", c.Param("id")).Updates(input).Error; err != nil {
+	result := models.DB.Model(&models.User{}).Where("id = ?", c.Param("id")).Updates(input)
+	if result.Error != nil {
+		err := result.Error
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
@@ -128,6 +137,13 @@ func UpdateUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "更新用户失败",
+		})
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"success": false,
+			"error":   "用户不存在",
 		})
 		return
 	}

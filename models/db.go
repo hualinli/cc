@@ -14,11 +14,19 @@ var DB *gorm.DB
 func Init() {
 	// 打开数据库
 	var err error
-	// SQLite: 使用 DSN 参数确保每个连接都启用外键约束。
-	DB, err = gorm.Open(sqlite.Open("cc.db?_foreign_keys=on"), &gorm.Config{})
+	// SQLite: 低并发场景优先稳定性，启用 WAL 与 busy_timeout。
+	DB, err = gorm.Open(sqlite.Open("cc.db?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
 	if err != nil {
 		log.Fatal("failed to connect database")
 	}
+
+	// SQLite 在本项目无高 QPS 诉求，单连接可显著降低锁竞争和慢 SQL 概率。
+	sqlDB, err := DB.DB()
+	if err != nil {
+		log.Fatal("failed to get raw sql db:", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
 
 	// SQLite: 强制开启外键约束（默认是关闭的）。
 	// 没有这行，gorm 生成的 foreign key/constraint 大多不会真正生效。
@@ -54,7 +62,16 @@ func ConfigureSQLite(db *gorm.DB) error {
 	if db == nil {
 		return nil
 	}
-	return db.Exec("PRAGMA foreign_keys = ON;").Error
+	if err := db.Exec("PRAGMA foreign_keys = ON;").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("PRAGMA journal_mode = WAL;").Error; err != nil {
+		return err
+	}
+	if err := db.Exec("PRAGMA busy_timeout = 5000;").Error; err != nil {
+		return err
+	}
+	return nil
 }
 
 // EnsureSQLiteIndexes 创建 SQLite 特有（或 gorm 不易表达）的索引。

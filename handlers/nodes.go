@@ -375,9 +375,22 @@ func ReleaseNode(c *gin.Context) {
 	}
 
 	// 释放节点
+	if node.CurrentExamID != nil {
+		var activeExam models.Exam
+		if err := models.DB.Where("id = ? AND end_time IS NULL", *node.CurrentExamID).First(&activeExam).Error; err == nil {
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"error":   "无法释放：该节点有进行中的考试",
+			})
+			return
+		}
+	}
+
 	updates := map[string]any{
-		"status":          models.NodeStatusIdle,
-		"current_user_id": nil,
+		"status":                   models.NodeStatusIdle,
+		"current_user_id":          nil,
+		"current_user_occupied_at": nil,
+		"current_exam_id":          nil,
 	}
 
 	if err := models.DB.Model(&node).Updates(updates).Error; err != nil {
@@ -401,7 +414,9 @@ func GetNodeStats(c *gin.Context) {
 	models.DB.Model(&models.Node{}).Where("status != ?", models.NodeStatusOffline).Count(&online)
 	models.DB.Model(&models.Node{}).Where("status = ? AND current_user_id IS NULL", models.NodeStatusIdle).Count(&idleAvailable)
 	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusBusy).Count(&busy)
-	models.DB.Model(&models.Node{}).Where("current_user_id IS NOT NULL").Count(&occupied)
+	models.DB.Model(&models.Node{}).
+		Where("current_user_id IS NOT NULL OR current_exam_id IS NOT NULL OR status = ?", models.NodeStatusBusy).
+		Count(&occupied)
 	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusOffline).Count(&offline)
 	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusError).Count(&errNodes)
 
