@@ -12,12 +12,19 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
 )
 
 const examSchedulerInterval = 15 * time.Second
+
+var (
+	errNoAvailableNode = errors.New("no available node")
+	errInvalidDuration = errors.New("duration_seconds must be greater than 0")
+	scheduleMutex      sync.Mutex
+)
 
 // StartExamScheduler 启动自动开考调度任务。
 func StartExamScheduler() {
@@ -35,7 +42,7 @@ func processDueExams() {
 	now := time.Now()
 	var dueExam models.Exam
 	result := models.DB.Where("start_time <= ? AND end_time IS NULL AND schedule_status IN ?", now,
-		[]string{models.ExamSchedulePending, models.ExamScheduleAssigned, models.ExamScheduleNotifyFail}).
+		[]string{models.ExamSchedulePending, models.ExamScheduleAssigned, models.ExamScheduleNotifyFail, models.ExamScheduleAssignFail}).
 		Order("start_time asc, created_at asc, id asc").
 		Limit(1).
 		Find(&dueExam)
@@ -58,12 +65,15 @@ func RetryScheduleExam(examID uint) error {
 }
 
 func scheduleExamByID(examID uint, manualRetry bool) error {
+	scheduleMutex.Lock()
+	defer scheduleMutex.Unlock()
+
 	var exam models.Exam
 	var node models.Node
 	needNotify := false
 	newlyAssigned := false
 
-	if err := models.DB.Transaction(func(tx *gorm.DB) error {
+	txErr := models.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&exam, examID).Error; err != nil {
 			return err
 		}
@@ -74,17 +84,11 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 		if exam.StartTime.After(time.Now()) {
 			return nil
 		}
-		if exam.DurationSeconds <= 0 {
-			msg := "duration_seconds must be greater than 0"
-			tx.Model(&exam).Updates(map[string]any{
-				"schedule_status": models.ExamScheduleNotifyFail,
-				"schedule_error":  msg,
-			})
-			return errors.New(msg)
-		}
-
-		if exam.ScheduleStatus == models.ExamScheduleAssignFail && !manualRetry {
+		if exam.ScheduleStatus == models.ExamScheduleRunning {
 			return nil
+		}
+		if exam.DurationSeconds <= 0 {
+			return errInvalidDuration
 		}
 
 		if exam.NodeID == nil {
@@ -93,12 +97,7 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 				return findErr
 			}
 			if !found {
-				msg := "no available node"
-				tx.Model(&exam).Updates(map[string]any{
-					"schedule_status": models.ExamScheduleAssignFail,
-					"schedule_error":  msg,
-				})
-				return errors.New(msg)
+				return errNoAvailableNode
 			}
 			node = available
 			now := time.Now()
@@ -134,8 +133,23 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 		}
 		needNotify = true
 		return nil
-	}); err != nil {
-		return err
+	})
+	if txErr != nil {
+		statusUpdates := map[string]any{}
+		switch {
+		case errors.Is(txErr, errNoAvailableNode):
+			statusUpdates["schedule_status"] = models.ExamScheduleAssignFail
+			statusUpdates["schedule_error"] = txErr.Error()
+		case errors.Is(txErr, errInvalidDuration):
+			statusUpdates["schedule_status"] = models.ExamScheduleNotifyFail
+			statusUpdates["schedule_error"] = txErr.Error()
+		}
+		if len(statusUpdates) > 0 {
+			if dbErr := models.DB.Model(&models.Exam{}).Where("id = ?", examID).Updates(statusUpdates).Error; dbErr != nil {
+				log.Printf("[ExamScheduler] persist failure status failed exam=%d: %v", examID, dbErr)
+			}
+		}
+		return txErr
 	}
 
 	if !needNotify {

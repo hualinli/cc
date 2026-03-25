@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func ListExams(c *gin.Context) {
@@ -151,6 +152,17 @@ func CreateExam(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "node_id 无效"})
 			return
 		}
+		var activeCount int64
+		if err := models.DB.Model(&models.Exam{}).
+			Where("node_id = ? AND end_time IS NULL", *input.NodeID).
+			Count(&activeCount).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "检查节点占用失败"})
+			return
+		}
+		if activeCount > 0 {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": "该节点已有进行中考试"})
+			return
+		}
 	}
 
 	name := strings.TrimSpace(input.Name)
@@ -174,7 +186,34 @@ func CreateExam(c *gin.Context) {
 		exam.ScheduleStatus = models.ExamScheduleAssigned
 	}
 
-	if err := models.DB.Create(&exam).Error; err != nil {
+	if err := models.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&exam).Error; err != nil {
+			return err
+		}
+
+		if input.NodeID != nil {
+			result := tx.Model(&models.Node{}).
+				Where("id = ? AND current_exam_id IS NULL", *input.NodeID).
+				Updates(map[string]any{
+					"status":                   models.NodeStatusBusy,
+					"current_exam_id":          exam.ID,
+					"current_user_id":          input.UserID,
+					"current_user_occupied_at": time.Now(),
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return gorm.ErrDuplicatedKey
+			}
+		}
+
+		return nil
+	}); err != nil {
+		if err == gorm.ErrDuplicatedKey {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": "节点已被其他考试占用"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "创建考试失败"})
 		return
 	}
@@ -214,9 +253,60 @@ func UpdateExam(c *gin.Context) {
 		return
 	}
 
-	var updates map[string]interface{}
-	if err := c.ShouldBindJSON(&updates); err != nil {
+	var input struct {
+		Name            *string    `json:"name"`
+		Subject         *string    `json:"subject"`
+		RoomID          *uint      `json:"room_id"`
+		UserID          *uint      `json:"user_id"`
+		StartTime       *time.Time `json:"start_time"`
+		DurationSeconds *int       `json:"duration_seconds"`
+		DurationMinutes *int       `json:"duration_minutes"`
+		ExamineeCount   *int       `json:"examinee_count"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "请求参数错误"})
+		return
+	}
+
+	updates := map[string]any{}
+	if input.Name != nil {
+		updates["name"] = strings.TrimSpace(*input.Name)
+	}
+	if input.Subject != nil {
+		updates["subject"] = strings.TrimSpace(*input.Subject)
+	}
+	if input.RoomID != nil {
+		updates["room_id"] = *input.RoomID
+	}
+	if input.UserID != nil {
+		updates["user_id"] = *input.UserID
+	}
+	if input.StartTime != nil {
+		updates["start_time"] = *input.StartTime
+	}
+	if input.DurationSeconds != nil {
+		if *input.DurationSeconds <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "duration_seconds 必须大于 0"})
+			return
+		}
+		updates["duration_seconds"] = *input.DurationSeconds
+	} else if input.DurationMinutes != nil {
+		if *input.DurationMinutes <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "duration_minutes 必须大于 0"})
+			return
+		}
+		updates["duration_seconds"] = *input.DurationMinutes * 60
+	}
+	if input.ExamineeCount != nil {
+		if *input.ExamineeCount < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "examinee_count 不能小于 0"})
+			return
+		}
+		updates["examinee_count"] = *input.ExamineeCount
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "没有可更新字段"})
 		return
 	}
 
@@ -316,23 +406,16 @@ func DeleteExam(c *gin.Context) {
 
 // GetExamStats 获取实时考试统计数据
 func GetExamStats(c *gin.Context) {
-	// 获取正在工作的节点（status = busy）且关联了考试的
-	var busyNodes []models.Node
-	if err := models.DB.Where("status = ? AND current_exam_id IS NOT NULL", models.NodeStatusBusy).
-		Preload("CurrentExam").
-		Preload("CurrentExam.Room").
-		Preload("CurrentExam.Node").
-		Find(&busyNodes).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取节点数据失败"})
-		return
-	}
-
-	// 从 busy 节点中提取正在进行的考试
+	// 以考试表为准获取进行中考试，避免依赖节点缓存字段导致遗漏。
 	var ongoingExams []models.Exam
-	for _, node := range busyNodes {
-		if node.CurrentExam != nil {
-			ongoingExams = append(ongoingExams, *node.CurrentExam)
-		}
+	if err := models.DB.Where("end_time IS NULL AND schedule_status = ?", models.ExamScheduleRunning).
+		Preload("Room").
+		Preload("Node").
+		Preload("User").
+		Order("start_time asc, id asc").
+		Find(&ongoingExams).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取考试数据失败"})
+		return
 	}
 
 	// 统计总数据

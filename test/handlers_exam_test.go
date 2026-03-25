@@ -362,3 +362,62 @@ func TestGetExamStats(t *testing.T) {
 		t.Errorf("Expected success true, got %v", response["success"])
 	}
 }
+
+func TestGetExamStats_IgnoreEndedCurrentExam(t *testing.T) {
+	db := setupTestDBForExamHandlers(t)
+	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+
+	endedAt := time.Now().Add(-1 * time.Minute)
+	nodeID := uint(2)
+	exam := models.Exam{
+		Name:            "Ended Exam",
+		Subject:         "Math",
+		RoomID:          1,
+		NodeID:          &nodeID,
+		UserID:          1,
+		DurationSeconds: 3600,
+		StartTime:       time.Now().Add(-2 * time.Hour),
+		EndTime:         &endedAt,
+		ExamineeCount:   50,
+	}
+	if err := db.Create(&exam).Error; err != nil {
+		t.Fatalf("create exam failed: %v", err)
+	}
+
+	node := models.Node{
+		Name:          "Busy Node Ended Exam",
+		Token:         "token-ended",
+		Model:         "model",
+		Address:       "address",
+		Status:        models.NodeStatusBusy,
+		Version:       "1.0.0",
+		CurrentExamID: &exam.ID,
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create node failed: %v", err)
+	}
+
+	router := setupExamRouter()
+	req, _ := http.NewRequest("GET", "/exams/stats", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", w.Code)
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if !response["success"].(bool) {
+		t.Fatalf("Expected success true, got %v", response["success"])
+	}
+	data, ok := response["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Expected data object, got %T", response["data"])
+	}
+	if totalRooms, ok := data["total_rooms"].(float64); !ok || int(totalRooms) != 0 {
+		t.Fatalf("expected total_rooms=0 when current exam already ended, got %v", data["total_rooms"])
+	}
+}
