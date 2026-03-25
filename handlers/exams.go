@@ -231,6 +231,54 @@ func UpdateExam(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": exam})
 }
 
+// EndExam 管理员手动结束考试
+func EndExam(c *gin.Context) {
+	id := c.Param("id")
+
+	var exam models.Exam
+	if err := models.DB.First(&exam, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "考试不存在"})
+		return
+	}
+
+	if exam.EndTime != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true, "message": "考试已结束"})
+		return
+	}
+
+	now := time.Now()
+	if err := models.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Exam{}).
+			Where("id = ? AND end_time IS NULL", exam.ID).
+			Updates(map[string]any{
+				"end_time":   now,
+				"updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+
+		if exam.NodeID != nil {
+			if err := tx.Model(&models.Node{}).
+				Where("id = ? AND current_exam_id = ?", *exam.NodeID, exam.ID).
+				Updates(map[string]any{
+					"status":                   models.NodeStatusIdle,
+					"current_exam_id":          nil,
+					"current_user_id":          nil,
+					"current_user_occupied_at": nil,
+				}).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "结束考试失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
 // DeleteExam 删除考试
 func DeleteExam(c *gin.Context) {
 	id := c.Param("id")

@@ -118,6 +118,7 @@ func main() {
 			adminAPI.GET("/exams/stats", handlers.GetExamStats)
 			adminAPI.POST("/exams", handlers.CreateExam)
 			adminAPI.PUT("/exams/:id", handlers.UpdateExam)
+			adminAPI.POST("/exams/:id/end", handlers.EndExam)
 			adminAPI.DELETE("/exams/:id", handlers.DeleteExam)
 			adminAPI.POST("/exams/:id/retry-schedule", handlers.RetryAssignAndNotifyExam)
 
