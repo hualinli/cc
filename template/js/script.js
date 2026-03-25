@@ -7,7 +7,9 @@ function switchTab(pageId, navElement) {
 
     // 导航栏样式更新
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    navElement.classList.add('active');
+    if (navElement) {
+        navElement.classList.add('active');
+    }
 
     // 更新标题
     const titles = {
@@ -76,6 +78,7 @@ function switchTab(pageId, navElement) {
 }
 
 let allHistoryRooms = [];
+const retryScheduleInFlight = new Set();
 
 function formatScheduleStatus(status) {
     const mapping = {
@@ -145,17 +148,31 @@ async function fetchHistory() {
 
         const tbody = document.querySelector('#history tbody');
         tbody.innerHTML = '';
-        
+
         if (exams.length === 0) {
             tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">暂无已结束考试记录</td></tr>';
             return;
         }
 
-        // 为每个考试获取异常数量
-        for (const e of exams) {
-            const alertResponse = await fetch(`/api/alerts?exam_id=${e.id}`);
-            const alertResult = await alertResponse.json();
-            const anomalyCount = alertResult.data ? alertResult.data.length : 0;
+        // 并发获取异常数量，单条失败不影响整体渲染。
+        const alertResponses = await Promise.allSettled(
+            exams.map(e => fetch(`/api/alerts?exam_id=${e.id}`))
+        );
+
+        for (let i = 0; i < exams.length; i++) {
+            const e = exams[i];
+            let anomalyCount = 0;
+
+            const settled = alertResponses[i];
+            if (settled.status === 'fulfilled' && settled.value.ok) {
+                try {
+                    const alertResult = await settled.value.json();
+                    anomalyCount = alertResult.data ? alertResult.data.length : 0;
+                } catch (err) {
+                    console.error(`解析考试 ${e.id} 异常列表失败`, err);
+                }
+            }
+
             const tr = `
                 <tr>
                     <td>EXP-${e.id}</td>
@@ -236,7 +253,13 @@ async function fetchExamManagement() {
 }
 
 async function retryScheduleExam(examId) {
+    if (retryScheduleInFlight.has(examId)) {
+        alert('该考试正在重试中，请稍候');
+        return;
+    }
+
     if (!confirm('确定要重试该考试的分配与开考通知吗？')) return;
+    retryScheduleInFlight.add(examId);
 
     try {
         const response = await fetch(`/api/exams/${examId}/retry-schedule`, { method: 'POST' });
@@ -253,6 +276,8 @@ async function retryScheduleExam(examId) {
     } catch (e) {
         console.error('Retry schedule error', e);
         alert('网络请求出错');
+    } finally {
+        retryScheduleInFlight.delete(examId);
     }
 }
 
@@ -302,11 +327,15 @@ async function loadExamFormOptions() {
 
 function openExamModal() {
     const now = new Date();
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
 
     document.getElementById('modalExamName').value = '';
     document.getElementById('modalExamSubject').value = '';
-    document.getElementById('modalExamStartTime').value = now.toISOString().slice(0, 16);
+    document.getElementById('modalExamStartTime').value = `${year}-${month}-${day}T${hours}:${minutes}`;
     document.getElementById('modalExamDurationMinutes').value = '120';
 
     loadExamFormOptions();
@@ -431,7 +460,7 @@ async function viewExamAnomalies(examId) {
         });
 
         alertsHTML += `</tbody></table></div>`;
-        
+
         const modalContent = `
             <div style="background: #1f2937; padding: 20px; border-radius: 8px; max-width: 900px; width: 90%; color: white;">
                 ${alertsHTML}
@@ -575,26 +604,6 @@ if (chartPieEl) {
     chartPie = echarts.init(chartPieEl);
 }
 
-// 基础数据源 (从后端动态获取)
-let currentRoomsState = [];
-
-async function fetchRooms() {
-    try {
-        const response = await fetch('/rooms');
-        currentRoomsState = await response.json();
-        // 转换字段以匹配原有逻辑
-        currentRoomsState = currentRoomsState.map(r => ({
-            id: r.room_id || r.Name, // 兼容性处理
-            subject: r.subject || '未命名项目',
-            count: r.count || 0,
-            anomalies: r.anomalies || 0
-        }));
-        refreshData();
-    } catch (e) {
-        console.error("获取考场数据失败", e);
-    }
-}
-
 // 柱状图配置
 const optionMain = {
     backgroundColor: 'transparent',
@@ -662,7 +671,7 @@ async function refreshData() {
         // 使用新的统计接口
         const response = await fetch('/api/exams/stats');
         const result = await response.json();
-        
+
         if (!result.success) {
             console.error("获取统计数据失败");
             return;
@@ -717,8 +726,8 @@ async function refreshData() {
             if (exams.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #9ca3af;">暂无正在进行的考试</td></tr>';
             } else {
-            exams.forEach(e => {
-                const tr = `
+                exams.forEach(e => {
+                    const tr = `
                     <tr>
                         <td>EXP-${e.id}</td>
                         <td>${e.subject || '未知'}</td>
@@ -730,14 +739,17 @@ async function refreshData() {
                         <td>${e.examinee_count || 0}</td>
                         <td><span style="color: ${e.anomalies_count > 0 ? '#ef4444' : '#10b981'}">${e.anomalies_count || 0}</span></td>
                         <td>
-                            <button class="btn-table" onclick="observeExam(${e.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px;">
+                            <button class="btn-table" onclick="observeExam(${e.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px; margin-right: 6px;">
                                 <i class="fa-solid fa-eye"></i> 查看
+                            </button>
+                            <button class="btn-table" onclick="viewExamAnomalies(${e.id})" style="background: var(--warning-color); color: white; font-size: 12px; padding: 4px 8px;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> 异常
                             </button>
                         </td>
                     </tr>
                 `;
-                tbody.innerHTML += tr;
-            });
+                    tbody.innerHTML += tr;
+                });
             }
         }
     } catch (e) {
@@ -754,25 +766,23 @@ function viewExamDetails(examId) {
 
 function endExam(examId) {
     if (!confirm('确定要结束这场考试吗？')) return;
-    
-    fetch(`/api/exams/${examId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ end_time: new Date().toISOString() })
+
+    fetch(`/api/exams/${examId}/end`, {
+        method: 'POST'
     })
-    .then(response => response.json())
-    .then(result => {
-        if (result.success) {
-            alert('考试已结束');
-            refreshData();
-        } else {
-            alert(result.error || '操作失败');
-        }
-    })
-    .catch(e => {
-        console.error('结束考试失败', e);
-        alert('网络请求出错');
-    });
+        .then(response => response.json())
+        .then(result => {
+            if (result.success) {
+                alert('考试已结束');
+                refreshData();
+            } else {
+                alert(result.error || '操作失败');
+            }
+        })
+        .catch(e => {
+            console.error('结束考试失败', e);
+            alert('网络请求出错');
+        });
 }
 
 function viewAnomaly(examId) {
@@ -831,11 +841,11 @@ function closeStreamSelectionModal() {
 async function loadOngoingExamsForSelection() {
     const container = document.getElementById('ongoing-exams-list');
     container.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 20px;">正在加载正在进行的考试...</div>';
-    
+
     try {
         const response = await fetch('/api/exams/stats');
         const result = await response.json();
-        
+
         if (!result.success) {
             container.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 20px;">加载失败</div>';
             return;
@@ -893,7 +903,7 @@ async function selectStream(examId) {
 
         const { index, isSingle } = currentTargetBox;
         let targetElement;
-        
+
         if (isSingle) {
             targetElement = document.querySelector('#single-view .monitor-grid .monitor-screen');
         } else {
@@ -904,7 +914,7 @@ async function selectStream(examId) {
             targetElement.classList.remove('add-btn');
             // 仍然保留点击事件，方便再次切换
             targetElement.onclick = () => addExam(index, isSingle);
-            
+
             targetElement.innerHTML = `
                 <div style="width: 100%; height: 100%; position: relative; pointer-events: none; background: #000; border-radius: 8px; overflow: hidden;">
                     <img src="${streamUrl}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: auto;">
@@ -925,7 +935,7 @@ async function selectStream(examId) {
 
 function resetBox(event, index, isSingle) {
     if (event) event.stopPropagation();
-    
+
     let targetElement;
     if (isSingle) {
         targetElement = document.querySelector('#single-view .monitor-grid .monitor-screen');
@@ -1162,7 +1172,6 @@ fetchRooms(); // 初始获取数据
 fetchExamsForConsole(); // 初始获取考试数据（总控制台）
 setInterval(fetchRooms, 10000); // 10秒同步一次考场数据
 setInterval(fetchNodes, 10000); // 10秒同步一次节点数据
-setInterval(fetchExamsForConsole, 10000); // 10秒同步一次考试数据
 
 // --- 节点管理逻辑 ---
 async function fetchNodes() {
@@ -1177,7 +1186,7 @@ async function fetchNodes() {
         const statsResult = await statsResp.json();
         const stats = statsResult.data || {};
 
-        document.getElementById('node-online-count').innerText = stats.idle_available || 0;
+        document.getElementById('node-online-count').innerText = stats.online || 0;
         document.getElementById('node-using-count').innerText = stats.occupied || 0;
         document.getElementById('node-offline-count').innerText = stats.offline || 0;
         document.getElementById('node-total-count').innerText = stats.total || 0;
@@ -1186,10 +1195,11 @@ async function fetchNodes() {
         const tbody = document.getElementById('node-list-body');
         tbody.innerHTML = '';
         nodes.forEach(node => {
+            const isOccupied = !!node.current_user_id || !!node.current_exam_id || node.status === 'busy';
             // 细化状态显示
             let statusClass = 'bg-primary';
             let statusText = '空闲可用';
-            
+
             if (node.status === 'offline') {
                 statusClass = 'bg-danger';
                 statusText = '离线';
@@ -1199,7 +1209,7 @@ async function fetchNodes() {
             } else if (node.status === 'busy') {
                 statusClass = 'bg-warning';
                 statusText = '正在监考';
-            } else if (node.current_user_id && node.status === 'idle') {
+            } else if (isOccupied && node.status === 'idle') {
                 statusClass = 'bg-info';
                 statusText = '已占用(未开始)';
             }
@@ -1218,7 +1228,7 @@ async function fetchNodes() {
                 <td>${node.last_heartbeat_at ? new Date(node.last_heartbeat_at).toLocaleString() : '-'}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
-                        ${node.current_user_id ? `
+                        ${isOccupied ? `
                             <button class="btn-table" onclick="releaseNode(${node.id}, '${node.name}')" style="background: var(--warning-color); color: white;">
                                 <i class="fa-solid fa-unlock"></i> 释放
                             </button>
@@ -1277,7 +1287,7 @@ function closeNodeModal() {
 function copyToken() {
     const tokenInput = document.getElementById('modalNodeToken');
     const toast = document.getElementById('copyToast');
-    
+
     tokenInput.select();
     tokenInput.setSelectionRange(0, 99999);
 
@@ -1395,8 +1405,11 @@ async function fetchExamsForConsole() {
                         <td>${exam.examinee_count || 0}</td>
                         <td><span style="color: ${exam.anomalies_count > 0 ? '#ef4444' : '#10b981'}">${exam.anomalies_count || 0}</span></td>
                         <td>
-                            <button class="btn-table" onclick="observeExam(${exam.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px;">
+                            <button class="btn-table" onclick="observeExam(${exam.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px; margin-right: 6px;">
                                 <i class="fa-solid fa-eye"></i> 查看
+                            </button>
+                            <button class="btn-table" onclick="viewExamAnomalies(${exam.id})" style="background: var(--warning-color); color: white; font-size: 12px; padding: 4px 8px;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> 异常
                             </button>
                         </td>
                     `;
@@ -1414,7 +1427,7 @@ async function observeExam(examId) {
     try {
         // 跳转到单点观测，打开 stream
         switchTab('single-view', document.querySelector('[onclick*="single-view"]'));
-        
+
         // 模拟选择信号源的行为
         currentTargetBox = { index: 0, isSingle: true };
         await selectStream(examId);
@@ -1455,7 +1468,7 @@ async function jumpToNode(nodeId) {
     try {
         const response = await fetch(`/api/nodes/${nodeId}/jump`);
         const result = await response.json();
-        
+
         if (result.success && result.jump_url) {
             window.open(result.jump_url, '_blank');
         } else {

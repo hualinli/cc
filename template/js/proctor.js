@@ -63,18 +63,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         nodeGrid.innerHTML = nodes.map(node => {
-            const isMyNode = node.is_assigned_to_me;
+            const isOccupied = !!node.current_user_id;
             const statusClass = `status-${node.status}`;
-            const statusText = {
-                'idle': '空闲',
-                'busy': node.is_assigned_to_me ? '您正在使用' : '正在使用',
-                'offline': '离线',
-                'error': '异常'
-            }[node.status] || node.status;
+            let statusText = isOccupied ? '已占用' : '未占用';
+            if (node.status === 'offline') statusText = '离线';
+            if (node.status === 'error') statusText = '异常';
 
             return `
-                <div class="node-card ${isMyNode ? 'my-node' : ''}">
-                    ${isMyNode ? '<div class="my-badge">当前使用中</div>' : ''}
+                <div class="node-card ${isOccupied ? 'my-node' : ''}">
+                    ${isOccupied ? '<div class="my-badge">当前占用中</div>' : ''}
                     <div class="node-header">
                         <div class="node-name">${node.name}</div>
                         <div style="display: flex; align-items: center; font-size: 0.8125rem;">
@@ -96,10 +93,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             <span>最后心跳: ${formatTime(node.last_heartbeat_at)}</span>
                         </div>
                     </div>
-                    <button class="enter-btn ${isMyNode ? 'resume' : ''}" 
+                    <button class="enter-btn ${isOccupied ? 'resume' : ''}" 
                             onclick="enterNode(${node.id})">
-                        <i class="fa-solid ${isMyNode ? 'fa-play' : 'fa-right-to-bracket'}"></i>
-                        ${isMyNode ? '恢复连接' : '进入监考'}
+                        <i class="fa-solid ${isOccupied ? 'fa-play' : 'fa-right-to-bracket'}"></i>
+                        ${isOccupied ? '继续监考' : '进入监考'}
                     </button>
                 </div>
             `;
@@ -130,6 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function formatTime(timeStr) {
         if (!timeStr) return '未知';
         const date = new Date(timeStr);
+        if (Number.isNaN(date.getTime())) return '无效时间';
         return date.toLocaleTimeString();
     }
 
@@ -148,9 +146,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.submitPasswordChange = async function() {
-        const old_password = document.getElementById('oldPassword').value;
-        const new_password = document.getElementById('newPassword').value;
-        const confirm_password = document.getElementById('confirmPassword').value;
+        const old_password = document.getElementById('oldPassword').value.trim();
+        const new_password = document.getElementById('newPassword').value.trim();
+        const confirm_password = document.getElementById('confirmPassword').value.trim();
 
         if (!old_password || !new_password) {
             alert("请填写完整信息");
