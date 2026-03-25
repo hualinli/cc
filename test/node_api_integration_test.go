@@ -196,3 +196,24 @@ func TestNodeHeartbeat_IdleSelfHealsStaleCurrentExam(t *testing.T) {
 		t.Fatalf("expected current_exam_id cleared after self-heal")
 	}
 }
+
+func TestNodeHeartbeat_InvalidStatusRejected(t *testing.T) {
+	db := setupNodeTestDB(t)
+	node := models.Node{Name: "Node-invalid-status", Token: "token-invalid-status", Status: models.NodeStatusIdle}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create node failed: %v", err)
+	}
+
+	r := setupNodeApiRouter()
+	input := map[string]string{"status": "unknown_status"}
+	body, _ := json.Marshal(input)
+	req := httptest.NewRequest("POST", "/node-api/v1/heartbeat", bytes.NewBuffer(body))
+	req.Header.Set("X-Node-Token", "token-invalid-status")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid status, got %d", w.Code)
+	}
+}
