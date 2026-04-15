@@ -22,13 +22,13 @@ const (
 // - LastHeartbeatAt 用于离线检测（cleanup 任务会据此把节点置为 offline）。
 type Node struct {
 	gorm.Model
-	Name    string `gorm:"not null;index" json:"name"`
-	Token   string `gorm:"not null;unique" json:"token"`
-	Model   string `json:"model"`
-	Address string `gorm:"index" json:"address"`
-	Status  string `gorm:"not null;index" json:"status"`
-	Version string `json:"version"`
-	ConfigVersion int `json:"config_version"`
+	Name          string `gorm:"not null;index" json:"name"`
+	Token         string `gorm:"not null;unique" json:"token"`
+	NodeModel     string `json:"Nodemodel"`
+	Address       string `gorm:"index" json:"address"`
+	Status        string `gorm:"not null;index" json:"status"`
+	Version       string `json:"version"`
+	ConfigVersion int    `json:"config_version"`
 	// 当前正在使用的监考员 (NULL 代表没人用)
 	CurrentUserID *uint `gorm:"index" json:"current_user_id"`
 	CurrentUser   *User `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"current_user,omitempty"`
