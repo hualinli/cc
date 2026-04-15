@@ -70,12 +70,12 @@ func TestRetryScheduleExam_AssignAndNotifySuccess(t *testing.T) {
 			_, _ = w.Write([]byte(`{"success": false, "error": "invalid json"}`))
 			return
 		}
-		if len(payload) != 3 {
+		if len(payload) != 4 {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"success": false, "error": "payload fields mismatch"}`))
 			return
 		}
-		if payload["subject"] != "Math" || payload["duration"] != "60" || payload["classroom_id"] == nil {
+		if payload["subject"] != "Math" || payload["duration"] != "60" || payload["classroom_id"] == nil || payload["exam_id"] == nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"success": false, "error": "missing required fields"}`))
 			return

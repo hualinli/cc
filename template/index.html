@@ -107,7 +107,8 @@
                 <div class="card" id="chart-pie"></div>
             </div>
             <div class="card detail-table-container">
-                <h3 style="margin-bottom: 15px; font-size: 16px; border-left: 4px solid var(--accent-color); padding-left: 10px;">
+                <h3
+                    style="margin-bottom: 15px; font-size: 16px; border-left: 4px solid var(--accent-color); padding-left: 10px;">
                     实时观测 - 正在进行的考试</h3>
                 <table>
                     <thead>
@@ -120,7 +121,7 @@
                             <th>开始时间</th>
                             <th>结束时间</th>
                             <th>考生人数</th>
-                            <th>异常人数</th>
+                            <th>异常次数</th>
                             <th>操作</th>
                         </tr>
                     </thead>
@@ -223,7 +224,8 @@
                     <input type="date" id="exam-mgmt-date">
                 </div>
                 <button onclick="fetchExamManagement()"><i class="fa-solid fa-magnifying-glass"></i> 查询考试</button>
-                <button onclick="openExamModal()" style="background: var(--success-color);"><i class="fa-solid fa-plus"></i> 新增考试</button>
+                <button onclick="openExamModal()" style="background: var(--success-color);"><i
+                        class="fa-solid fa-plus"></i> 新增考试</button>
             </div>
             <div class="card">
                 <table>
@@ -298,19 +300,26 @@
             <div class="card" style="margin-bottom: 20px;">
                 <div class="setting-section-title">节点统计</div>
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
-                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(34, 197, 94, 0.1); border-radius: 6px;">
+                    <div
+                        style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(34, 197, 94, 0.1); border-radius: 6px;">
                         <span style="font-size: 12px; color: #888; margin-bottom: 5px;">在线节点</span>
-                        <span style="font-size: 28px; font-weight: bold; color: var(--success-color);" id="node-online-count">0</span>
+                        <span style="font-size: 28px; font-weight: bold; color: var(--success-color);"
+                            id="node-online-count">0</span>
                     </div>
-                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
+                    <div
+                        style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
                         <span style="font-size: 12px; color: #888; margin-bottom: 5px;">使用中节点</span>
-                        <span style="font-size: 28px; font-weight: bold; color: var(--danger-color);" id="node-using-count">0</span>
+                        <span style="font-size: 28px; font-weight: bold; color: var(--danger-color);"
+                            id="node-using-count">0</span>
                     </div>
-                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
+                    <div
+                        style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
                         <span style="font-size: 12px; color: #888; margin-bottom: 5px;">离线节点</span>
-                        <span style="font-size: 28px; font-weight: bold; color: #ef4444;" id="node-offline-count">0</span>
+                        <span style="font-size: 28px; font-weight: bold; color: #ef4444;"
+                            id="node-offline-count">0</span>
                     </div>
-                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 6px;">
+                    <div
+                        style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 6px;">
                         <span style="font-size: 12px; color: #888; margin-bottom: 5px;">节点总数</span>
                         <span style="font-size: 28px; font-weight: bold;" id="node-total-count">0</span>
                     </div>
@@ -319,8 +328,7 @@
 
             <!-- 节点列表 -->
             <div class="card">
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <div class="setting-section-title" style="margin-bottom: 0;">所有节点</div>
                     <button class="btn-add-user" onclick="openNodeModal('add')">
                         <i class="fa-solid fa-plus"></i> 新增节点
@@ -391,7 +399,7 @@
             </div>
         </div>
 
-        </div>
+    </div>
     </div>
 
     <div class="modal-overlay" id="userModal">
@@ -440,19 +448,35 @@
             <div class="form-row" id="tokenRow" style="display: none;">
                 <label>Token</label>
                 <div style="flex: 1; position: relative;">
-                    <input type="text" id="modalNodeToken" readonly 
-                        title="点击复制" 
-                        style="background: #1f2937; cursor: pointer; flex: 1; border-color: #4b5563; color: #9ca3af; width: 100%;" 
+                    <input type="text" id="modalNodeToken" readonly title="点击复制"
+                        style="background: #1f2937; cursor: pointer; flex: 1; border-color: #4b5563; color: #9ca3af; width: 100%;"
                         onclick="copyToken()">
-                    <div id="copyToast" style="display: none; position: absolute; right: 10px; top: -25px; background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; animation: fadeInOut 2s forwards;">已复制</div>
+                    <div id="copyToast"
+                        style="display: none; position: absolute; right: 10px; top: -25px; background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; animation: fadeInOut 2s forwards;">
+                        已复制</div>
                 </div>
             </div>
             <style>
                 @keyframes fadeInOut {
-                    0% { opacity: 0; transform: translateY(5px); }
-                    15% { opacity: 1; transform: translateY(0); }
-                    85% { opacity: 1; transform: translateY(0); }
-                    100% { opacity: 0; transform: translateY(-5px); }
+                    0% {
+                        opacity: 0;
+                        transform: translateY(5px);
+                    }
+
+                    15% {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+
+                    85% {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+
+                    100% {
+                        opacity: 0;
+                        transform: translateY(-5px);
+                    }
                 }
             </style>
             <div style="display: flex; gap: 10px; margin-top: 20px;">
@@ -498,7 +522,7 @@
             </div>
             <div class="form-row">
                 <label>开始时间 *</label>
-                <input type="datetime-local" id="modalExamStartTime">
+                <input type="datetime-local" id="modalExamStartTime" step="60">
             </div>
             <div class="form-row">
                 <label>时长（分钟）*</label>
@@ -537,7 +561,7 @@
         </div>
     </div>
 
-    <script src="/js/script.js?v=1.0.4"></script>
+    <script src="/js/script.js?v=1.0.5"></script>
 </body>
 
 </html>

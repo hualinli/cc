@@ -71,7 +71,7 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 	var exam models.Exam
 	var node models.Node
 	needNotify := false
-	newlyAssigned := false
+	lockedNodeInTx := false
 
 	txErr := models.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&exam, examID).Error; err != nil {
@@ -119,7 +119,48 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 			}
 			exam.NodeID = &node.ID
 			exam.ScheduleStatus = models.ExamScheduleAssigned
-			newlyAssigned = true
+			lockedNodeInTx = true
+		} else {
+			if err := tx.First(&node, *exam.NodeID).Error; err != nil {
+				return err
+			}
+
+			// 防止同一节点存在其他进行中的考试。
+			var conflictCount int64
+			if err := tx.Model(&models.Exam{}).
+				Where("node_id = ? AND end_time IS NULL AND id <> ?", node.ID, exam.ID).
+				Count(&conflictCount).Error; err != nil {
+				return err
+			}
+			if conflictCount > 0 {
+				return fmt.Errorf("node %d has another active exam", node.ID)
+			}
+
+			now := time.Now()
+			lockResult := tx.Model(&models.Node{}).
+				Where("id = ? AND (current_exam_id IS NULL OR current_exam_id = ?)", node.ID, exam.ID).
+				Updates(map[string]any{
+					"status":                   models.NodeStatusBusy,
+					"current_user_id":          exam.UserID,
+					"current_user_occupied_at": now,
+					"current_exam_id":          exam.ID,
+				})
+			if lockResult.Error != nil {
+				return lockResult.Error
+			}
+			if lockResult.RowsAffected == 0 {
+				return fmt.Errorf("node %d is occupied by another exam", node.ID)
+			}
+
+			if err := tx.Model(&exam).Updates(map[string]any{
+				"schedule_status": models.ExamScheduleAssigned,
+				"schedule_error":  "",
+				"updated_at":      now,
+			}).Error; err != nil {
+				return err
+			}
+			exam.ScheduleStatus = models.ExamScheduleAssigned
+			lockedNodeInTx = true
 		}
 
 		if exam.NodeID == nil {
@@ -164,7 +205,7 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 		if dbErr := models.DB.Model(&models.Exam{}).Where("id = ?", exam.ID).Updates(rollbackUpdates).Error; dbErr != nil {
 			log.Printf("[ExamScheduler] update notify failure status failed exam=%d: %v", exam.ID, dbErr)
 		}
-		if newlyAssigned {
+		if lockedNodeInTx {
 			if dbErr := models.DB.Model(&models.Node{}).
 				Where("id = ? AND current_exam_id = ?", node.ID, exam.ID).
 				Updates(map[string]any{
@@ -217,6 +258,7 @@ func notifyNodeStartExam(node models.Node, exam models.Exam) error {
 		"subject":      exam.Subject,
 		"duration":     strconv.Itoa((exam.DurationSeconds + 59) / 60),
 		"classroom_id": exam.RoomID,
+		"exam_id":      exam.ID,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

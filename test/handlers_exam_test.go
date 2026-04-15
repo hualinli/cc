@@ -149,6 +149,7 @@ func TestListExams(t *testing.T) {
 
 	// Create a test exam
 	nodeID := uint(1)
+	endedAt := time.Now()
 	exam := models.Exam{
 		Name:            "Test Exam",
 		Subject:         "Math",
@@ -157,6 +158,7 @@ func TestListExams(t *testing.T) {
 		UserID:          1,
 		DurationSeconds: 7200,
 		StartTime:       time.Now(),
+		EndTime:         &endedAt,
 		ExamineeCount:   50,
 	}
 	db.Create(&exam)
@@ -207,6 +209,7 @@ func TestGetExams(t *testing.T) {
 
 	// Create a test exam
 	nodeID := uint(1)
+	endedAt := time.Now()
 	exam := models.Exam{
 		Name:            "Test Exam",
 		Subject:         "Math",
@@ -215,6 +218,7 @@ func TestGetExams(t *testing.T) {
 		UserID:          1,
 		DurationSeconds: 7200,
 		StartTime:       time.Now(),
+		EndTime:         &endedAt,
 		ExamineeCount:   50,
 	}
 	db.Create(&exam)
@@ -285,6 +289,7 @@ func TestDeleteExam(t *testing.T) {
 
 	// Create a test exam
 	nodeID := uint(1)
+	endedAt := time.Now()
 	exam := models.Exam{
 		Name:            "Test Exam",
 		Subject:         "Math",
@@ -293,6 +298,7 @@ func TestDeleteExam(t *testing.T) {
 		UserID:          1,
 		DurationSeconds: 7200,
 		StartTime:       time.Now(),
+		EndTime:         &endedAt,
 		ExamineeCount:   50,
 	}
 	db.Create(&exam)

@@ -128,6 +128,22 @@ function escapeHtml(text) {
         .replace(/'/g, '&#039;');
 }
 
+function getNextMinuteDate(baseDate = new Date()) {
+    const next = new Date(baseDate);
+    next.setSeconds(0, 0);
+    next.setMinutes(next.getMinutes() + 1);
+    return next;
+}
+
+function toLocalDateTimeInputValue(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
 async function fetchHistory() {
     try {
         const building = document.getElementById('history-building').value;
@@ -326,16 +342,15 @@ async function loadExamFormOptions() {
 }
 
 function openExamModal() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const hours = String(now.getHours()).padStart(2, '0');
-    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const startInput = document.getElementById('modalExamStartTime');
+    const minStart = getNextMinuteDate();
+    const minStartValue = toLocalDateTimeInputValue(minStart);
 
     document.getElementById('modalExamName').value = '';
     document.getElementById('modalExamSubject').value = '';
-    document.getElementById('modalExamStartTime').value = `${year}-${month}-${day}T${hours}:${minutes}`;
+    startInput.min = minStartValue;
+    startInput.step = 60;
+    startInput.value = minStartValue;
     document.getElementById('modalExamDurationMinutes').value = '120';
 
     loadExamFormOptions();
@@ -357,6 +372,13 @@ async function submitExam() {
 
     if (!subject || !startTime || !durationMinutes || !roomId || !userId) {
         alert('请填写完整的必填项');
+        return;
+    }
+
+    const selectedStart = new Date(startTime);
+    const minStart = getNextMinuteDate();
+    if (Number.isNaN(selectedStart.getTime()) || selectedStart < minStart) {
+        alert('开始时间最早只能选择当前时刻的下一分钟');
         return;
     }
 
@@ -692,12 +714,15 @@ async function refreshData() {
         if (statCoeff) statCoeff.innerText = data.anomaly_coeff.toFixed(3);
 
         // 2. 准备图表数据
-        const roomNames = exams.map(e => e.room ? e.room.name : '未知');
+        const roomNames = exams.map(e => {
+            if (!e.room) return '未知';
+            return e.room.building ? `${e.room.building}-${e.room.name}` : e.room.name;
+        });
         const anomalyCounts = exams.map(e => e.anomalies_count || 0);
 
         const pieData = exams.map(e => ({
             value: e.anomalies_count || 0,
-            name: e.room ? e.room.name : '未知'
+            name: e.room ? (e.room.building ? `${e.room.building}-${e.room.name}` : e.room.name) : '未知'
         })).filter(item => item.value > 0);
 
         if (pieData.length === 0) {

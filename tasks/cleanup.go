@@ -4,12 +4,15 @@ import (
 	"cc/models"
 	"log"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 // StartCleanupTask 启动定时清理任务
 func StartCleanupTask() {
 	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
 		for range ticker.C {
 			cleanupStaleNodes()
 			cleanupStaleExams()
@@ -30,6 +33,10 @@ func cleanupStaleNodes() {
 			"current_user_occupied_at": nil,
 			"current_exam_id":          nil, // 节点离线时清除考试关联
 		})
+	if result.Error != nil {
+		log.Printf("[Cleanup] failed to mark stale nodes offline: %v", result.Error)
+		return
+	}
 
 	if result.RowsAffected > 0 {
 		log.Printf("[Cleanup] Marked %d stale nodes as offline and released user locks", result.RowsAffected)
@@ -46,9 +53,13 @@ func cleanupStaleNodes() {
 			"current_user_id":          nil,
 			"current_user_occupied_at": nil,
 		})
+	if result2.Error != nil {
+		log.Printf("[Cleanup] failed to release stale idle node occupation: %v", result2.Error)
+		return
+	}
 
 	if result2.RowsAffected > 0 {
-		log.Printf("[Cleanup] Released %d idle nodes that were occupied >10min", result2.RowsAffected)
+		log.Printf("[Cleanup] Released %d idle nodes that were occupied >2min", result2.RowsAffected)
 	}
 }
 
@@ -68,17 +79,43 @@ func cleanupStaleExams() {
 	}
 
 	for _, exam := range exams {
-		// 标记结束时间为当前时间
-		models.DB.Model(&exam).Update("end_time", time.Now())
-		log.Printf("[Cleanup] Auto-closed stale running exam %d (subject: %s) due to node offline/error", exam.ID, exam.Subject)
+		err := models.DB.Transaction(func(tx *gorm.DB) error {
+			now := time.Now()
+			updateResult := tx.Model(&models.Exam{}).
+				Where("id = ? AND end_time IS NULL", exam.ID).
+				Updates(map[string]any{
+					"end_time":   now,
+					"updated_at": now,
+				})
+			if updateResult.Error != nil {
+				return updateResult.Error
+			}
+			if updateResult.RowsAffected == 0 {
+				return nil
+			}
 
-		// 确保节点关联也被清空
-		if exam.NodeID != nil {
-			models.DB.Model(&models.Node{}).Where("id = ?", *exam.NodeID).Updates(map[string]any{
-				"current_exam_id":          nil,
-				"current_user_id":          nil,
-				"current_user_occupied_at": nil,
-			})
+			if exam.NodeID != nil {
+				nodeResult := tx.Model(&models.Node{}).
+					Where("id = ? AND current_exam_id = ?", *exam.NodeID, exam.ID).
+					Updates(map[string]any{
+						"current_exam_id":          nil,
+						"current_user_id":          nil,
+						"current_user_occupied_at": nil,
+						"status":                   models.NodeStatusIdle,
+					})
+				if nodeResult.Error != nil {
+					return nodeResult.Error
+				}
+			}
+
+			return nil
+		})
+
+		if err != nil {
+			log.Printf("[Cleanup] failed to auto-close stale exam %d: %v", exam.ID, err)
+			continue
 		}
+
+		log.Printf("[Cleanup] Auto-closed stale running exam %d (subject: %s) due to node offline/error", exam.ID, exam.Subject)
 	}
 }

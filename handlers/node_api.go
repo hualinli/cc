@@ -81,7 +81,7 @@ func NodeHeartbeat(c *gin.Context) {
 				})
 				return
 			}
-			if countErr == nil && activeExamCount == 0 {
+			if activeExamCount == 0 {
 				if node.Status != models.NodeStatusIdle {
 					updateData["status"] = models.NodeStatusIdle
 				}
@@ -175,6 +175,40 @@ func SyncTask(c *gin.Context) {
 			var currentNode models.Node
 			if err := tx.First(&currentNode, nodeIDUint).Error; err != nil {
 				return err
+			}
+
+			// 控制中心已分配考试ID时，优先走幂等确认，避免 current_user_id 短暂丢失导致 start 失败。
+			if input.ExamID != 0 {
+				var assignedExam models.Exam
+				assignedResult := tx.Where("id = ?", input.ExamID).Limit(1).Find(&assignedExam)
+				if assignedResult.Error != nil {
+					return assignedResult.Error
+				}
+				if assignedResult.RowsAffected == 0 {
+					return fmt.Errorf("exam_id 无效")
+				}
+				if assignedExam.NodeID == nil || *assignedExam.NodeID != nodeIDUint {
+					return fmt.Errorf("exam_id 不属于当前节点")
+				}
+				if assignedExam.EndTime != nil {
+					return fmt.Errorf("考试已结束")
+				}
+				if assignedExam.RoomID != input.RoomID {
+					return fmt.Errorf("room_id 与考试不匹配")
+				}
+
+				now := time.Now()
+				if err := tx.Model(&currentNode).Updates(map[string]any{
+					"current_exam_id":          assignedExam.ID,
+					"current_user_id":          assignedExam.UserID,
+					"current_user_occupied_at": now,
+					"status":                   models.NodeStatusBusy,
+				}).Error; err != nil {
+					return err
+				}
+
+				responseExamID = assignedExam.ID
+				return nil
 			}
 
 			// 节点未被占用时不允许节点自行开考。
@@ -278,6 +312,7 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
+		nodeReleaseWarning := ""
 		if err := models.DB.Transaction(func(tx *gorm.DB) error {
 			result := tx.Model(&models.Exam{}).
 				Where("id = ? AND end_time IS NULL", input.ExamID).
@@ -286,21 +321,36 @@ func SyncTask(c *gin.Context) {
 				return result.Error
 			}
 			if result.RowsAffected == 0 {
-				return fmt.Errorf("考试已结束或不存在")
+				return nil
 			}
 
-			return tx.Model(&models.Node{}).
-				Where("id = ? AND (current_exam_id = ? OR current_exam_id IS NULL)", nodeIDUint, input.ExamID).
+			nodeResult := tx.Model(&models.Node{}).
+				Where("id = ? AND current_exam_id = ?", nodeIDUint, input.ExamID).
 				Updates(map[string]any{
 					"current_exam_id":          nil,
 					"current_user_id":          nil,
 					"current_user_occupied_at": nil,
 					"status":                   models.NodeStatusIdle,
-				}).Error
+				})
+			if nodeResult.Error != nil {
+				return nodeResult.Error
+			}
+			if nodeResult.RowsAffected == 0 {
+				nodeReleaseWarning = "节点当前考试状态已变化，考试已结束但节点未释放"
+			}
+			return nil
 		}); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
 				"error":   "更新考试状态失败: " + err.Error(),
+			})
+			return
+		}
+
+		if nodeReleaseWarning != "" {
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"warning": nodeReleaseWarning,
 			})
 			return
 		}
@@ -451,6 +501,13 @@ func ReportAlert(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
 			"error":   "exam_id 不属于当前节点",
+		})
+		return
+	}
+	if exam.EndTime != nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   "考试已结束，拒绝上报告警",
 		})
 		return
 	}

@@ -3,6 +3,7 @@ package handlers
 import (
 	"cc/models"
 	"cc/tasks"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +12,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+func isConstraintConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique constraint") || strings.Contains(msg, "constraint failed")
+}
 
 func ListExams(c *gin.Context) {
 	var exams []models.Exam
@@ -187,7 +196,22 @@ func CreateExam(c *gin.Context) {
 	}
 
 	if err := models.DB.Transaction(func(tx *gorm.DB) error {
+		if input.NodeID != nil {
+			var activeCount int64
+			if err := tx.Model(&models.Exam{}).
+				Where("node_id = ? AND end_time IS NULL", *input.NodeID).
+				Count(&activeCount).Error; err != nil {
+				return err
+			}
+			if activeCount > 0 {
+				return gorm.ErrDuplicatedKey
+			}
+		}
+
 		if err := tx.Create(&exam).Error; err != nil {
+			if input.NodeID != nil && isConstraintConflict(err) {
+				return gorm.ErrDuplicatedKey
+			}
 			return err
 		}
 
@@ -210,7 +234,7 @@ func CreateExam(c *gin.Context) {
 
 		return nil
 	}); err != nil {
-		if err == gorm.ErrDuplicatedKey {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			c.JSON(http.StatusConflict, gin.H{"success": false, "error": "节点已被其他考试占用"})
 			return
 		}
@@ -266,6 +290,19 @@ func UpdateExam(c *gin.Context) {
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "请求参数错误"})
 		return
+	}
+
+	if exam.EndTime != nil {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "error": "考试已结束，禁止更新"})
+		return
+	}
+
+	isRunningOrAssigned := exam.ScheduleStatus == models.ExamScheduleRunning || exam.ScheduleStatus == models.ExamScheduleAssigned
+	if isRunningOrAssigned {
+		if input.RoomID != nil || input.UserID != nil || input.StartTime != nil || input.DurationSeconds != nil || input.DurationMinutes != nil {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "error": "考试进行中或已分配节点时，禁止修改 room_id、user_id、start_time、duration"})
+			return
+		}
 	}
 
 	updates := map[string]any{}
@@ -372,6 +409,16 @@ func EndExam(c *gin.Context) {
 // DeleteExam 删除考试
 func DeleteExam(c *gin.Context) {
 	id := c.Param("id")
+
+	var exam models.Exam
+	if err := models.DB.First(&exam, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "考试不存在"})
+		return
+	}
+	if exam.EndTime == nil {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "error": "进行中的考试不允许删除"})
+		return
+	}
 
 	// 检查是否有相关的异常记录
 	var alertCount int64
