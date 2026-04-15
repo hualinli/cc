@@ -93,6 +93,7 @@ func main() {
 		{
 			// 用户管理
 			adminAPI.GET("/users", handlers.ListUsers)
+			adminAPI.GET("/users/:id", handlers.GetUser)
 			adminAPI.POST("/users", handlers.CreateUser)
 			adminAPI.DELETE("/users/:id", handlers.DeleteUser)
 			adminAPI.PUT("/users/:id", handlers.UpdateUser)
