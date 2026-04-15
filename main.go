@@ -98,6 +98,14 @@ func main() {
 			adminAPI.DELETE("/users/:id", handlers.DeleteUser)
 			adminAPI.PUT("/users/:id", handlers.UpdateUser)
 
+
+			// 教室管理
+			adminAPI.GET("/rooms", handlers.ListRooms)
+			adminAPI.GET("/rooms/:id", handlers.GetRoom)
+			adminAPI.POST("/rooms", handlers.CreateRoom)
+			adminAPI.DELETE("/rooms/:id", handlers.DeleteRoom)
+			adminAPI.PUT("/rooms/:id", handlers.UpdateRoom)
+			
 			// 节点管理
 			adminAPI.GET("/nodes", handlers.ListNodes)
 			adminAPI.GET("/nodes/stats", handlers.GetNodeStats)
@@ -106,12 +114,6 @@ func main() {
 			adminAPI.PUT("/nodes/:id", handlers.UpdateNode)
 			adminAPI.GET("/nodes/:id/jump", handlers.GetNodeJumpURL)
 			adminAPI.POST("/nodes/:id/release", handlers.ReleaseNode)
-
-			// 教室管理
-			adminAPI.GET("/rooms", handlers.ListRooms)
-			adminAPI.POST("/rooms", handlers.CreateRoom)
-			adminAPI.DELETE("/rooms/:id", handlers.DeleteRoom)
-			adminAPI.PUT("/rooms/:id", handlers.UpdateRoom)
 
 			// 考试管理（完整CRUD）
 			adminAPI.GET("/exams", handlers.ListExams)
