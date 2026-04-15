@@ -2,11 +2,51 @@ package handlers
 
 import (
 	"cc/models"
+	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
+
+var validAlertTypes = map[models.AlertType]struct{}{
+	models.AlertTypePhoneCheating: {},
+	models.AlertTypeLookAround:    {},
+	models.AlertTypeWhispering:    {},
+	models.AlertTypeLeaveSheet:    {},
+	models.AlertTypeStandUp:       {},
+	models.AlertTypeOther:         {},
+}
+
+func isValidAlertType(alertType models.AlertType) bool {
+	_, ok := validAlertTypes[alertType]
+	return ok
+}
+
+func getUintFromJSON(value any) (uint, bool) {
+	switch v := value.(type) {
+	case float64:
+		return uint(v), true
+	case int:
+		return uint(v), true
+	case int64:
+		return uint(v), true
+	case uint:
+		return v, true
+	case uint64:
+		return uint(v), true
+	case string:
+		parsed, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return uint(parsed), true
+	default:
+		return 0, false
+	}
+}
 
 // ListAlerts 获取所有异常记录
 func ListAlerts(c *gin.Context) {
@@ -68,10 +108,22 @@ func CreateAlert(c *gin.Context) {
 		return
 	}
 
-	// 基础校验：exam 必须存在
+	if alert.ExamID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "exam_id 无效"})
+		return
+	}
+	if !isValidAlertType(alert.Type) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "type 无效"})
+		return
+	}
+
 	var exam models.Exam
 	if err := models.DB.Where("id = ?", alert.ExamID).First(&exam).Error; err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "exam_id 无效"})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "exam_id 无效"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "数据库错误"})
 		return
 	}
 
@@ -102,12 +154,58 @@ func UpdateAlert(c *gin.Context) {
 		return
 	}
 
+	allowedFields := map[string]struct{}{
+		"exam_id":      {},
+		"type":         {},
+		"seat_number":  {},
+		"x":            {},
+		"y":            {},
+		"message":      {},
+		"picture_path": {},
+	}
+
+	for key := range updates {
+		if _, ok := allowedFields[key]; !ok {
+			delete(updates, key)
+		}
+	}
+
+	if rawType, ok := updates["type"]; ok {
+		typeStr, ok := rawType.(string)
+		if !ok || !isValidAlertType(models.AlertType(typeStr)) {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "type 无效"})
+			return
+		}
+	}
+
+	if rawExamID, ok := updates["exam_id"]; ok {
+		examID, ok := getUintFromJSON(rawExamID)
+		if !ok || examID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "exam_id 无效"})
+			return
+		}
+		var exam models.Exam
+		if err := models.DB.Where("id = ?", examID).First(&exam).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "exam_id 无效"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "数据库错误"})
+			return
+		}
+		updates["exam_id"] = examID
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "没有可更新字段"})
+		return
+	}
+
 	if err := models.DB.Model(&alert).Updates(updates).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "更新异常记录失败"})
 		return
 	}
 
-	// 重新加载关联数据
 	models.DB.Preload("Exam").Preload("Exam.Room").Preload("Exam.Node").First(&alert, id)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": alert})
 }
@@ -116,8 +214,13 @@ func UpdateAlert(c *gin.Context) {
 func DeleteAlert(c *gin.Context) {
 	id := c.Param("id")
 
-	if err := models.DB.Delete(&models.Alert{}, id).Error; err != nil {
+	result := models.DB.Delete(&models.Alert{}, id)
+	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "删除异常记录失败"})
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "异常记录不存在"})
 		return
 	}
 
@@ -130,7 +233,11 @@ func GetAlerts(c *gin.Context) {
 	var alert models.Alert
 
 	if err := models.DB.Preload("Exam").Preload("Exam.Room").Preload("Exam.Node").First(&alert, id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "异常记录不存在"})
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "异常记录不存在"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取异常记录失败"})
 		return
 	}
 
