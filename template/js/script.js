@@ -128,6 +128,36 @@ function escapeHtml(text) {
         .replace(/'/g, '&#039;');
 }
 
+function handleAuthFailure(response) {
+    if (!response) return false;
+    if (response.status === 401) {
+        window.location.href = '/login';
+        return true;
+    }
+    if (response.status === 403) {
+        alert('当前账号无权执行该操作');
+        return true;
+    }
+    return false;
+}
+
+async function parseJsonSafe(response) {
+    try {
+        return await response.json();
+    } catch (e) {
+        return {};
+    }
+}
+
+async function requestJSON(url, options = {}) {
+    const response = await fetch(url, options);
+    if (handleAuthFailure(response)) {
+        return { response, result: null, aborted: true };
+    }
+    const result = await parseJsonSafe(response);
+    return { response, result, aborted: false };
+}
+
 function getNextMinuteDate(baseDate = new Date()) {
     const next = new Date(baseDate);
     next.setSeconds(0, 0);
@@ -158,8 +188,8 @@ async function fetchHistory() {
         if (roomId) params.append('room_id', roomId);
         if (subject) params.append('subject', subject);
 
-        const response = await fetch(`/api/exams?${params.toString()}`);
-        const result = await response.json();
+        const { result, aborted } = await requestJSON(`/api/exams?${params.toString()}`);
+        if (aborted || !result) return;
         const exams = (result.data || []).filter(e => !!e.end_time);
 
         const tbody = document.querySelector('#history tbody');
@@ -172,7 +202,7 @@ async function fetchHistory() {
 
         // 并发获取异常数量，单条失败不影响整体渲染。
         const alertResponses = await Promise.allSettled(
-            exams.map(e => fetch(`/api/alerts?exam_id=${e.id}`))
+            exams.map(e => requestJSON(`/api/alerts?exam_id=${e.id}`))
         );
 
         for (let i = 0; i < exams.length; i++) {
@@ -180,13 +210,9 @@ async function fetchHistory() {
             let anomalyCount = 0;
 
             const settled = alertResponses[i];
-            if (settled.status === 'fulfilled' && settled.value.ok) {
-                try {
-                    const alertResult = await settled.value.json();
-                    anomalyCount = alertResult.data ? alertResult.data.length : 0;
-                } catch (err) {
-                    console.error(`解析考试 ${e.id} 异常列表失败`, err);
-                }
+            if (settled.status === 'fulfilled' && settled.value && !settled.value.aborted) {
+                const alertResult = settled.value.result || {};
+                anomalyCount = alertResult.data ? alertResult.data.length : 0;
             }
 
             const tr = `
@@ -221,9 +247,9 @@ async function fetchExamManagement() {
         if (subject) params.append('subject', subject);
         if (date) params.append('date', date);
 
-        const response = await fetch(`/api/exams?${params.toString()}`);
-        const result = await response.json();
-        let exams = (result.data || []).filter(e => !e.end_time);
+        const req = await requestJSON(`/api/exams?${params.toString()}`);
+        if (req.aborted || !req.result) return;
+        let exams = (req.result.data || []).filter(e => !e.end_time);
 
         if (status) {
             exams = exams.filter(e => getExamMgmtState(e) === status);
@@ -278,8 +304,8 @@ async function retryScheduleExam(examId) {
     retryScheduleInFlight.add(examId);
 
     try {
-        const response = await fetch(`/api/exams/${examId}/retry-schedule`, { method: 'POST' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/exams/${examId}/retry-schedule`, { method: 'POST' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('重试调度成功');
@@ -307,15 +333,17 @@ async function loadExamFormOptions() {
     nodeSelect.innerHTML = '<option value="">加载中...</option>';
 
     try {
-        const [roomsResp, usersResp, nodesResp] = await Promise.all([
-            fetch('/api/rooms'),
-            fetch('/api/users'),
-            fetch('/api/nodes')
+        const [roomsReq, usersReq, nodesReq] = await Promise.all([
+            requestJSON('/api/rooms'),
+            requestJSON('/api/users'),
+            requestJSON('/api/nodes')
         ]);
 
-        const roomsResult = await roomsResp.json();
-        const usersResult = await usersResp.json();
-        const nodesResult = await nodesResp.json();
+        if (roomsReq.aborted || usersReq.aborted || nodesReq.aborted) return;
+
+        const roomsResult = roomsReq.result || {};
+        const usersResult = usersReq.result || {};
+        const nodesResult = nodesReq.result || {};
 
         const rooms = roomsResult.data || [];
         const users = usersResult.data || [];
@@ -395,12 +423,12 @@ async function submitExam() {
     }
 
     try {
-        const response = await fetch('/api/exams', {
+        const { response, result, aborted } = await requestJSON('/api/exams', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        const result = await response.json();
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('考试创建成功');
@@ -419,8 +447,8 @@ async function submitExam() {
 // 查看考试的异常记录
 async function viewExamAnomalies(examId) {
     try {
-        const response = await fetch(`/api/alerts?exam_id=${examId}`);
-        const result = await response.json();
+        const { result, aborted } = await requestJSON(`/api/alerts?exam_id=${examId}`);
+        if (aborted || !result) return;
         const alerts = result.data || [];
 
         // 检查是否已经存在异常弹窗
@@ -511,8 +539,8 @@ async function deleteExam(examId) {
     if (!confirm('确定要删除这条考试记录吗？相关的异常记录也会被删除。')) return;
 
     try {
-        const response = await fetch(`/api/exams/${examId}`, { method: 'DELETE' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/exams/${examId}`, { method: 'DELETE' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('删除成功');
@@ -532,8 +560,8 @@ async function deleteAlert(alertId, examId) {
     if (!confirm('确定要删除这条异常记录吗？')) return;
 
     try {
-        const response = await fetch(`/api/alerts/${alertId}`, { method: 'DELETE' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/alerts/${alertId}`, { method: 'DELETE' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('删除成功');
@@ -553,8 +581,8 @@ async function deleteAlert(alertId, examId) {
 async function populateHistoryFilters() {
     try {
         // 1. 抓取所有教室数据
-        const respRooms = await fetch('/api/rooms');
-        const roomsResult = await respRooms.json();
+        const { result: roomsResult, aborted } = await requestJSON('/api/rooms');
+        if (aborted || !roomsResult) return;
         allHistoryRooms = roomsResult.data || [];
 
         // 2. 提取并填充楼宇
@@ -691,8 +719,8 @@ if (chartPie) chartPie.setOption(optionPie);
 async function refreshData() {
     try {
         // 使用新的统计接口
-        const response = await fetch('/api/exams/stats');
-        const result = await response.json();
+        const { result, aborted } = await requestJSON('/api/exams/stats');
+        if (aborted || !result) return;
 
         if (!result.success) {
             console.error("获取统计数据失败");
@@ -789,25 +817,23 @@ function viewExamDetails(examId) {
     // 可以添加额外的过滤逻辑
 }
 
-function endExam(examId) {
+async function endExam(examId) {
     if (!confirm('确定要结束这场考试吗？')) return;
 
-    fetch(`/api/exams/${examId}/end`, {
-        method: 'POST'
-    })
-        .then(response => response.json())
-        .then(result => {
-            if (result.success) {
-                alert('考试已结束');
-                refreshData();
-            } else {
-                alert(result.error || '操作失败');
-            }
-        })
-        .catch(e => {
-            console.error('结束考试失败', e);
-            alert('网络请求出错');
-        });
+    try {
+        const { response, result, aborted } = await requestJSON(`/api/exams/${examId}/end`, { method: 'POST' });
+        if (aborted || !result) return;
+
+        if (response.ok && result.success) {
+            alert('考试已结束');
+            refreshData();
+        } else {
+            alert(result.error || '操作失败');
+        }
+    } catch (e) {
+        console.error('结束考试失败', e);
+        alert('网络请求出错');
+    }
 }
 
 function viewAnomaly(examId) {
@@ -868,8 +894,8 @@ async function loadOngoingExamsForSelection() {
     container.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 20px;">正在加载正在进行的考试...</div>';
 
     try {
-        const response = await fetch('/api/exams/stats');
-        const result = await response.json();
+        const { result, aborted } = await requestJSON('/api/exams/stats');
+        if (aborted || !result) return;
 
         if (!result.success) {
             container.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 20px;">加载失败</div>';
@@ -912,8 +938,8 @@ async function selectStream(examId) {
     if (!currentTargetBox) return;
 
     try {
-        const response = await fetch('/api/exams');
-        const result = await response.json();
+        const { result, aborted } = await requestJSON('/api/exams');
+        if (aborted || !result) return;
         const exams = result.data || [];
         const exam = exams.find(e => e.id == examId);
 
@@ -1019,12 +1045,14 @@ document.addEventListener('fullscreenchange', () => {
 // --- 7. 后台交互与数据初始化 (新增) ---
 // 获取用户信息并更新侧边栏
 async function fetchUserInfo() {
-    // TODO: 后续对接后端真实接口
-    const user = { username: "Admin", role: "管理员" };
-
-    // 侧边栏显示
-    document.getElementById('sidebarUsername').innerText = user.username;
-    document.getElementById('sidebarAvatar').innerText = user.username.charAt(0).toUpperCase();
+    try {
+        const { result, aborted } = await requestJSON('/api/me');
+        if (aborted || !result || !result.username) return;
+        document.getElementById('sidebarUsername').innerText = result.username;
+        document.getElementById('sidebarAvatar').innerText = result.username.charAt(0).toUpperCase();
+    } catch (err) {
+        console.error('Fetch current user info failed', err);
+    }
 }
 
 // 退出登录
@@ -1041,9 +1069,9 @@ async function logout() {
 // --- 用户管理逻辑 ---
 async function fetchUsers() {
     try {
-        const response = await fetch('/api/users'); // 匹配 main.go
+        const { response, result, aborted } = await requestJSON('/api/users'); // 匹配 main.go
+        if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取用户列表');
-        const result = await response.json();
         const users = result.data || []; // 适配后端 {"success": true, "data": [...]}
 
         const tbody = document.getElementById('user-list-body');
@@ -1174,12 +1202,12 @@ async function changePassword() {
     }
 
     try {
-        const response = await fetch('/api/users/password', {
+        const { response, result, aborted } = await requestJSON('/api/users/password', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ old_password: oldPass, new_password: newPass })
         });
-        const result = await response.json();
+        if (aborted || !result) return;
         if (response.ok && result.success) {
             alert('密码修改成功，请重新登录');
             window.location.href = '/login';
@@ -1201,14 +1229,14 @@ setInterval(fetchNodes, 10000); // 10秒同步一次节点数据
 // --- 节点管理逻辑 ---
 async function fetchNodes() {
     try {
-        const response = await fetch('/api/nodes');
+        const { response, result, aborted } = await requestJSON('/api/nodes');
+        if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取节点列表');
-        const result = await response.json();
         const nodes = result.data || [];
 
         // 获取精确统计数据
-        const statsResp = await fetch('/api/nodes/stats');
-        const statsResult = await statsResp.json();
+        const { result: statsResult, aborted: statsAborted } = await requestJSON('/api/nodes/stats');
+        if (statsAborted || !statsResult) return;
         const stats = statsResult.data || {};
 
         document.getElementById('node-online-count').innerText = stats.online || 0;
@@ -1247,7 +1275,7 @@ async function fetchNodes() {
                         ${node.name}
                     </a>
                 </td>
-                <td>${node.model}</td>
+                <td>${node.nodemodel || '-'}</td>
                 <td>${node.address}</td>
                 <td><span class="badge ${statusClass}">${statusText}</span></td>
                 <td>${node.last_heartbeat_at ? new Date(node.last_heartbeat_at).toLocaleString() : '-'}</td>
@@ -1296,7 +1324,7 @@ function openNodeModal(mode, nodeData = null) {
         // 填充数据
         document.getElementById('modalNodeId').value = nodeData.id;
         document.getElementById('modalNodeName').value = nodeData.name;
-        document.getElementById('modalNodeModel').value = nodeData.model;
+        document.getElementById('modalNodeModel').value = nodeData.nodemodel || '';
         document.getElementById('modalNodeAddress').value = nodeData.address;
         document.getElementById('modalNodeToken').value = nodeData.token;
         document.getElementById('tokenRow').style.display = 'flex';
@@ -1353,7 +1381,7 @@ async function submitNode() {
     const url = isEdit ? `/api/nodes/${id}` : '/api/nodes';
     const method = isEdit ? 'PUT' : 'POST';
 
-    const body = { name, model, address };
+    const body = { name, nodemodel: model, address };
 
     try {
         const response = await fetch(url, {
@@ -1380,8 +1408,8 @@ async function deleteNode(id, name) {
     if (!confirm(`确定要删除节点 "${name}" 吗？`)) return;
 
     try {
-        const response = await fetch(`/api/nodes/${id}`, { method: 'DELETE' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/nodes/${id}`, { method: 'DELETE' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('删除成功');
@@ -1397,9 +1425,9 @@ async function deleteNode(id, name) {
 async function fetchExamsForConsole() {
     try {
         // 使用 stats 接口，它通过 busy 节点查询正在进行的考试
-        const response = await fetch('/api/exams/stats');
+        const { response, result, aborted } = await requestJSON('/api/exams/stats');
+        if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取考试统计');
-        const result = await response.json();
 
         if (!result.success) {
             console.error('获取考试统计失败');
@@ -1475,8 +1503,8 @@ async function releaseNode(id, name) {
     if (!confirm(`确定要强制释放节点 "${name}" 吗？`)) return;
 
     try {
-        const response = await fetch(`/api/nodes/${id}/release`, { method: 'POST' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/nodes/${id}/release`, { method: 'POST' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('节点已释放');
@@ -1491,8 +1519,8 @@ async function releaseNode(id, name) {
 
 async function jumpToNode(nodeId) {
     try {
-        const response = await fetch(`/api/nodes/${nodeId}/jump`);
-        const result = await response.json();
+        const { result, aborted } = await requestJSON(`/api/nodes/${nodeId}/jump`);
+        if (aborted || !result) return;
 
         if (result.success && result.jump_url) {
             window.open(result.jump_url, '_blank');
@@ -1508,8 +1536,8 @@ async function jumpToNode(nodeId) {
 async function syncRooms() {
     if (!confirm('确定要同步教室信息吗？')) return;
     try {
-        const response = await fetch('/api/sync/rooms', { method: 'POST' });
-        const result = await response.json();
+        const { result, aborted } = await requestJSON('/api/sync/rooms', { method: 'POST' });
+        if (aborted || !result) return;
         if (result.success) {
             alert('教室信息同步指令已发送');
         } else {
@@ -1523,9 +1551,9 @@ async function syncRooms() {
 // --- 教室管理逻辑 ---
 async function fetchRooms() {
     try {
-        const response = await fetch('/api/rooms');
+        const { response, result, aborted } = await requestJSON('/api/rooms');
+        if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取教室列表');
-        const result = await response.json();
         const rooms = result.data || [];
 
         // 更新统计面板
@@ -1612,13 +1640,12 @@ async function submitRoom() {
     const body = { name, building, rtsp_url: rtspUrl };
 
     try {
-        const response = await fetch(url, {
+        const { response, result, aborted } = await requestJSON(url, {
             method: method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         });
-
-        const result = await response.json();
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert(isEdit ? '修改成功' : '添加教室成功');
@@ -1636,8 +1663,8 @@ async function deleteRoom(id, name) {
     if (!confirm(`确定要删除教室 "${name}" 吗？`)) return;
 
     try {
-        const response = await fetch(`/api/rooms/${id}`, { method: 'DELETE' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/rooms/${id}`, { method: 'DELETE' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('删除成功');

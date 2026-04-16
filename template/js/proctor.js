@@ -3,10 +3,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const usernameDisplay = document.getElementById('usernameDisplay');
     const loadingOverlay = document.getElementById('loadingOverlay');
 
+    function handleAuthFailure(response) {
+        if (response.status === 401) {
+            window.location.href = '/login';
+            return true;
+        }
+        if (response.status === 403) {
+            alert('当前账号无权执行该操作');
+            return true;
+        }
+        return false;
+    }
+
+    async function parseJsonSafe(response) {
+        try {
+            return await response.json();
+        } catch (e) {
+            return {};
+        }
+    }
+
     async function fetchUserInfo() {
         try {
             const response = await fetch('/api/me');
-            const data = await response.json();
+            if (handleAuthFailure(response)) return;
+            const data = await parseJsonSafe(response);
             if (data.username) {
                 usernameDisplay.innerText = data.username;
             }
@@ -32,11 +53,8 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchNodes() {
         try {
             const response = await fetch('/api/proctor/nodes');
-            if (response.status === 401) {
-                window.location.href = '/login';
-                return;
-            }
-            const result = await response.json();
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
             // 确定使用标准返回格式 { success: true, data: [] }
             const nodes = result.data || [];
             renderNodes(nodes);
@@ -82,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="node-info">
                         <div class="info-item">
                             <i class="fa-solid fa-microchip"></i>
-                            <span>型号: ${node.model}</span>
+                            <span>型号: ${node.nodemodel || '-'}</span>
                         </div>
                         <div class="info-item">
                             <i class="fa-solid fa-network-wired"></i>
@@ -109,7 +127,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`/api/proctor/nodes/${nodeId}/jump`, {
                 method: 'POST'
             });
-            const result = await response.json();
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
             if (result.success && result.jump_url) {
                 // 跳转到具体的监考节点页面
                 window.location.href = result.jump_url;
@@ -133,19 +152,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- 修改密码逻辑 ---
     const passwordModal = document.getElementById('passwordModal');
-    
-    window.openPasswordModal = function() {
+
+    window.openPasswordModal = function () {
         passwordModal.style.display = 'flex';
     }
 
-    window.closePasswordModal = function() {
+    window.closePasswordModal = function () {
         passwordModal.style.display = 'none';
         document.getElementById('oldPassword').value = '';
         document.getElementById('newPassword').value = '';
         document.getElementById('confirmPassword').value = '';
     }
 
-    window.submitPasswordChange = async function() {
+    window.submitPasswordChange = async function () {
         const old_password = document.getElementById('oldPassword').value.trim();
         const new_password = document.getElementById('newPassword').value.trim();
         const confirm_password = document.getElementById('confirmPassword').value.trim();
@@ -166,7 +185,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ old_password, new_password })
             });
-            const result = await response.json();
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
             if (response.ok && result.success) {
                 alert('密码修改成功，请重新登录');
                 window.location.href = '/login';
