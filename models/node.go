@@ -24,7 +24,7 @@ type Node struct {
 	gorm.Model
 	Name          string `gorm:"not null;index" json:"name"`
 	Token         string `gorm:"not null;unique" json:"token"`
-	NodeModel     string `json:"Nodemodel"`
+	NodeModel     string `json:"nodemodel"`
 	Address       string `gorm:"index" json:"address"`
 	Status        string `gorm:"not null;index" json:"status"`
 	Version       string `json:"version"`

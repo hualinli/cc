@@ -16,9 +16,9 @@ import (
 
 func CreateNode(c *gin.Context) {
 	type Input struct {
-		Name    string `json:"name" binding:"required"`
-		Model   string `json:"model" binding:"required"`
-		Address string `json:"address"` // 可选，不填则等待心跳自动上报
+		Name      string `json:"name" binding:"required"`
+		NodeModel string `json:"nodemodel"`
+		Address   string `json:"address"` // 可选，不填则等待心跳自动上报
 	}
 
 	var input Input
@@ -31,7 +31,7 @@ func CreateNode(c *gin.Context) {
 	}
 
 	name := strings.TrimSpace(input.Name)
-	model := strings.TrimSpace(input.Model)
+	model := strings.TrimSpace(input.NodeModel)
 	if name == "" || model == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
@@ -130,9 +130,9 @@ func DeleteNode(c *gin.Context) {
 
 func UpdateNode(c *gin.Context) {
 	type Input struct {
-		Name    *string `json:"name"`
-		Model   *string `json:"model"`
-		Address *string `json:"address"`
+		Name      *string `json:"name"`
+		NodeModel *string `json:"nodemodel"`
+		Address   *string `json:"address"`
 	}
 
 	var input Input
@@ -156,8 +156,8 @@ func UpdateNode(c *gin.Context) {
 		}
 		updates["name"] = name
 	}
-	if input.Model != nil {
-		model := strings.TrimSpace(*input.Model)
+	if input.NodeModel != nil {
+		model := strings.TrimSpace(*input.NodeModel)
 		if model == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,

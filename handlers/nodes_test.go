@@ -256,7 +256,7 @@ func TestCreateNode(t *testing.T) {
 	}{
 		{
 			name:                 "create node success with address",
-			requestBody:          `{"name":"node-1","model":"m1","address":"10.0.0.1:8080"}`,
+			requestBody:          `{"name":"node-1","nodemodel":"m1","address":"10.0.0.1:8080"}`,
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: `"success":true`,
 			expectSuccess:        true,
@@ -272,7 +272,7 @@ func TestCreateNode(t *testing.T) {
 		},
 		{
 			name:                 "create node default address for whitespace",
-			requestBody:          `{"name":"node-2","model":"m2","address":"   "}`,
+			requestBody:          `{"name":"node-2","nodemodel":"m2","address":"   "}`,
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: `"success":true`,
 			expectSuccess:        true,
@@ -288,14 +288,14 @@ func TestCreateNode(t *testing.T) {
 		},
 		{
 			name:                 "invalid input missing name",
-			requestBody:          `{"model":"m1"}`,
+			requestBody:          `{"nodemodel":"m1"}`,
 			expectedCode:         http.StatusBadRequest,
 			expectedBodyContains: "输入错误",
 			expectSuccess:        false,
 		},
 		{
 			name:                 "invalid input blank name after trim",
-			requestBody:          `{"name":"   ","model":"m1"}`,
+			requestBody:          `{"name":"   ","nodemodel":"m1"}`,
 			expectedCode:         http.StatusBadRequest,
 			expectedBodyContains: "节点名称和模型不能为空",
 			expectSuccess:        false,
