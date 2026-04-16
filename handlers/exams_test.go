@@ -79,6 +79,7 @@ func setupExamsRouter() *gin.Engine {
 	r.PUT("/exams/:id", UpdateExam)
 	r.GET("/exams/:id", GetExams)
 	r.GET("/exams", ListExams)
+	r.GET("/exams/stats", GetExamStats)
 	return r
 }
 
@@ -338,6 +339,109 @@ func TestListExams_InvalidDate(t *testing.T) {
 	w := performExamJSONRequest(t, r, http.MethodGet, "/exams?date=2023-02-30", "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetExamStats_Empty(t *testing.T) {
+	cleanup := setupExamsHandlerTestDB(t)
+	defer cleanup()
+
+	r := setupExamsRouter()
+	w := performExamJSONRequest(t, r, http.MethodGet, "/exams/stats", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	resp := decodeExamResp(t, w)
+	data := resp["data"].(map[string]any)
+	if data["total_rooms"] != float64(0) {
+		t.Fatalf("expected total_rooms 0, got %v", data["total_rooms"])
+	}
+	if data["total_students"] != float64(0) {
+		t.Fatalf("expected total_students 0, got %v", data["total_students"])
+	}
+	if data["total_anomalies"] != float64(0) {
+		t.Fatalf("expected total_anomalies 0, got %v", data["total_anomalies"])
+	}
+	if data["anomaly_coeff"] != float64(0) {
+		t.Fatalf("expected anomaly_coeff 0, got %v", data["anomaly_coeff"])
+	}
+	ongoing := data["ongoing_exams"].([]any)
+	if len(ongoing) != 0 {
+		t.Fatalf("expected no ongoing exams, got %d", len(ongoing))
+	}
+}
+
+func TestGetExamStats_WithRunningExams(t *testing.T) {
+	cleanup := setupExamsHandlerTestDB(t)
+	defer cleanup()
+
+	room := seedExamRoom(t)
+	user := seedExamUser(t)
+	exam1 := models.Exam{Name: "running1", Subject: "math", RoomID: room.ID, UserID: user.ID, StartTime: time.Now(), ScheduleStatus: models.ExamScheduleRunning, ExamineeCount: 10}
+	exam2 := models.Exam{Name: "running2", Subject: "physics", RoomID: room.ID, UserID: user.ID, StartTime: time.Now().Add(time.Minute), ScheduleStatus: models.ExamScheduleRunning, ExamineeCount: 20}
+	exam3 := models.Exam{Name: "pending", Subject: "history", RoomID: room.ID, UserID: user.ID, StartTime: time.Now().Add(2 * time.Minute), ScheduleStatus: models.ExamSchedulePending}
+	if err := models.DB.Create(&exam1).Error; err != nil {
+		t.Fatalf("failed to seed exam1: %v", err)
+	}
+	if err := models.DB.Create(&exam2).Error; err != nil {
+		t.Fatalf("failed to seed exam2: %v", err)
+	}
+	if err := models.DB.Create(&exam3).Error; err != nil {
+		t.Fatalf("failed to seed exam3: %v", err)
+	}
+	alert1 := models.Alert{ExamID: exam1.ID, Type: models.AlertTypePhoneCheating, SeatNumber: "A1", Message: "issue1"}
+	alert2 := models.Alert{ExamID: exam1.ID, Type: models.AlertTypeLookAround, SeatNumber: "A2", Message: "issue2"}
+	alert3 := models.Alert{ExamID: exam2.ID, Type: models.AlertTypeOther, SeatNumber: "B1", Message: "issue3"}
+	if err := models.DB.Create(&alert1).Error; err != nil {
+		t.Fatalf("failed to seed alert1: %v", err)
+	}
+	if err := models.DB.Create(&alert2).Error; err != nil {
+		t.Fatalf("failed to seed alert2: %v", err)
+	}
+	if err := models.DB.Create(&alert3).Error; err != nil {
+		t.Fatalf("failed to seed alert3: %v", err)
+	}
+
+	r := setupExamsRouter()
+	w := performExamJSONRequest(t, r, http.MethodGet, "/exams/stats", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	resp := decodeExamResp(t, w)
+	data := resp["data"].(map[string]any)
+	if data["total_rooms"] != float64(2) {
+		t.Fatalf("expected total_rooms 2, got %v", data["total_rooms"])
+	}
+	expectedStudents := exam1.ExamineeCount + exam2.ExamineeCount
+	if data["total_students"] != float64(expectedStudents) {
+		t.Fatalf("expected total_students %d, got %v", expectedStudents, data["total_students"])
+	}
+	if data["total_anomalies"] != float64(3) {
+		t.Fatalf("expected total_anomalies 3, got %v", data["total_anomalies"])
+	}
+	expectedCoeff := float64(3) / float64(expectedStudents)
+	actualCoeff := data["anomaly_coeff"].(float64)
+	diff := actualCoeff - expectedCoeff
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 1e-9 {
+		t.Fatalf("expected anomaly_coeff %.6f, got %.6f", expectedCoeff, actualCoeff)
+	}
+	ongoing := data["ongoing_exams"].([]any)
+	if len(ongoing) != 2 {
+		t.Fatalf("expected 2 ongoing exams, got %d", len(ongoing))
+	}
+	counts := map[string]int64{}
+	for _, item := range ongoing {
+		examMap := item.(map[string]any)
+		counts[examMap["name"].(string)] = int64(examMap["anomalies_count"].(float64))
+	}
+	if counts["running1"] != 2 {
+		t.Fatalf("expected running1 anomalies 2, got %d", counts["running1"])
+	}
+	if counts["running2"] != 1 {
+		t.Fatalf("expected running2 anomalies 1, got %d", counts["running2"])
 	}
 }
 

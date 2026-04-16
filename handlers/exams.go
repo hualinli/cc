@@ -139,7 +139,6 @@ func CreateExam(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": exam})
 }
 
-// DeleteExam 删除考试
 func DeleteExam(c *gin.Context) {
 	idUint, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
@@ -188,8 +187,6 @@ func DeleteExam(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "删除成功"})
 }
 
-
-// UpdateExam 更新考试信息
 func UpdateExam(c *gin.Context) {
 	idUint, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
@@ -302,7 +299,6 @@ func UpdateExam(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": exam})
 }
 
-// GetExams 获取单个考试详细信息
 func GetExams(c *gin.Context) {
 	idUint, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
@@ -405,13 +401,90 @@ func ListExams(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取考试列表失败"})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": exams})
 }
 
+func GetExamStats(c *gin.Context) {
+	// 以考试表为准获取进行中考试，避免依赖节点缓存字段导致遗漏。
+	var ongoingExams []models.Exam
+	if err := models.DB.Where("end_time IS NULL AND schedule_status = ?", models.ExamScheduleRunning).
+		Preload("Room").
+		Preload("Node").
+		Preload("User").
+		Order("start_time asc, id asc").
+		Find(&ongoingExams).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取考试数据失败"})
+		return
+	}
 
+	// 统计总数据
+	totalRooms := len(ongoingExams)
+	totalStudents := 0
+	for _, exam := range ongoingExams {
+		totalStudents += exam.ExamineeCount
+	}
 
+	// 统计异常总数（所有正在进行的考试）
+	var totalAnomalies int64
+	examIDs := make([]uint, 0, len(ongoingExams))
+	for _, exam := range ongoingExams {
+		examIDs = append(examIDs, exam.ID)
+	}
+	alertCounts := make(map[uint]int64, len(ongoingExams))
+	if len(examIDs) > 0 {
+		rows, err := models.DB.Model(&models.Alert{}).
+			Select("exam_id, COUNT(*) AS count").
+			Where("exam_id IN ?", examIDs).
+			Group("exam_id").Rows()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取异常统计失败"})
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var examID uint
+			var count int64
+			if err := rows.Scan(&examID, &count); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取异常统计失败"})
+				return
+			}
+			alertCounts[examID] = count
+			totalAnomalies += count
+		}
+	}
 
+	// 计算异常系数
+	anomalyCoeff := 0.0
+	if totalStudents > 0 {
+		anomalyCoeff = float64(totalAnomalies) / float64(totalStudents)
+	}
+
+	// 为每个考试统计异常数
+	type ExamWithAnomalies struct {
+		models.Exam
+		AnomaliesCount int64 `json:"anomalies_count"`
+	}
+
+	examsWithAnomalies := make([]ExamWithAnomalies, 0, len(ongoingExams))
+	for _, exam := range ongoingExams {
+		examsWithAnomalies = append(examsWithAnomalies, ExamWithAnomalies{
+			Exam:           exam,
+			AnomaliesCount: alertCounts[exam.ID],
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"total_rooms":     totalRooms,
+			"total_students":  totalStudents,
+			"total_anomalies": totalAnomalies,
+			"anomaly_coeff":   anomalyCoeff,
+			"ongoing_exams":   examsWithAnomalies,
+		},
+	})
+}
 
 // RetryAssignAndNotifyExam 管理员手动重试考试分配与通知
 func RetryAssignAndNotifyExam(c *gin.Context) {
@@ -434,7 +507,6 @@ func RetryAssignAndNotifyExam(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": exam})
 }
-
 
 // EndExam 管理员手动结束考试
 func EndExam(c *gin.Context) {
@@ -482,72 +554,6 @@ func EndExam(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
-}
-
-
-// GetExamStats 获取实时考试统计数据
-func GetExamStats(c *gin.Context) {
-	// 以考试表为准获取进行中考试，避免依赖节点缓存字段导致遗漏。
-	var ongoingExams []models.Exam
-	if err := models.DB.Where("end_time IS NULL AND schedule_status = ?", models.ExamScheduleRunning).
-		Preload("Room").
-		Preload("Node").
-		Preload("User").
-		Order("start_time asc, id asc").
-		Find(&ongoingExams).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取考试数据失败"})
-		return
-	}
-
-	// 统计总数据
-	totalRooms := len(ongoingExams)
-	totalStudents := 0
-	for _, exam := range ongoingExams {
-		totalStudents += exam.ExamineeCount
-	}
-
-	// 统计异常总数（所有正在进行的考试）
-	var totalAnomalies int64
-	examIDs := make([]uint, 0, len(ongoingExams))
-	for _, exam := range ongoingExams {
-		examIDs = append(examIDs, exam.ID)
-	}
-	if len(examIDs) > 0 {
-		models.DB.Model(&models.Alert{}).Where("exam_id IN ?", examIDs).Count(&totalAnomalies)
-	}
-
-	// 计算异常系数
-	anomalyCoeff := 0.0
-	if totalStudents > 0 {
-		anomalyCoeff = float64(totalAnomalies) / float64(totalStudents)
-	}
-
-	// 为每个考试统计异常数
-	type ExamWithAnomalies struct {
-		models.Exam
-		AnomaliesCount int64 `json:"anomalies_count"`
-	}
-
-	examsWithAnomalies := make([]ExamWithAnomalies, 0, len(ongoingExams))
-	for _, exam := range ongoingExams {
-		var count int64
-		models.DB.Model(&models.Alert{}).Where("exam_id = ?", exam.ID).Count(&count)
-		examsWithAnomalies = append(examsWithAnomalies, ExamWithAnomalies{
-			Exam:           exam,
-			AnomaliesCount: count,
-		})
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data": gin.H{
-			"total_rooms":     totalRooms,
-			"total_students":  totalStudents,
-			"total_anomalies": totalAnomalies,
-			"anomaly_coeff":   anomalyCoeff,
-			"ongoing_exams":   examsWithAnomalies,
-		},
-	})
 }
 
 func isConstraintConflict(err error) bool {

@@ -118,11 +118,11 @@ func main() {
 			// 考试管理（完整CRUD）
 			adminAPI.GET("/exams", handlers.ListExams)
 			adminAPI.GET("/exams/:id", handlers.GetExams)
-			adminAPI.GET("/exams/stats", handlers.GetExamStats)
 			adminAPI.POST("/exams", handlers.CreateExam)
 			adminAPI.PUT("/exams/:id", handlers.UpdateExam)
-			adminAPI.POST("/exams/:id/end", handlers.EndExam)
 			adminAPI.DELETE("/exams/:id", handlers.DeleteExam)
+			adminAPI.POST("/exams/:id/end", handlers.EndExam)
+			adminAPI.GET("/exams/stats", handlers.GetExamStats)
 			adminAPI.POST("/exams/:id/retry-schedule", handlers.RetryAssignAndNotifyExam)
 
 			// 异常管理（完整CRUD）
