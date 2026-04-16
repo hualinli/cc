@@ -151,35 +151,33 @@ func DeleteExam(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "考试不存在"})
 		return
 	}
-	if exam.EndTime == nil {
+	if exam.EndTime == nil && exam.ScheduleStatus == models.ExamScheduleRunning {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "error": "进行中的考试不允许删除"})
 		return
 	}
 
-	// 检查是否有相关的异常记录
-	var alertCount int64
-	if err := models.DB.Model(&models.Alert{}).Where("exam_id = ?", uint(idUint)).Count(&alertCount).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "检查异常记录失败"})
-		return
-	}
-	if alertCount > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "该考试有关联的异常记录，无法删除"})
-		return
-	}
+	if err := models.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("exam_id = ?", exam.ID).Delete(&models.Alert{}).Error; err != nil {
+			return err
+		}
 
-	// 检查是否有节点当前正在使用该考试
-	var nodeCount int64
-	if err := models.DB.Model(&models.Node{}).Where("current_exam_id = ?", uint(idUint)).Count(&nodeCount).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "检查节点关联失败"})
-		return
-	}
-	if nodeCount > 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "该考试正在被节点使用，无法删除"})
-		return
-	}
+		if err := tx.Model(&models.Node{}).
+			Where("current_exam_id = ?", exam.ID).
+			Updates(map[string]any{
+				"status":                   models.NodeStatusIdle,
+				"current_exam_id":          nil,
+				"current_user_id":          nil,
+				"current_user_occupied_at": nil,
+			}).Error; err != nil {
+			return err
+		}
 
-	// 删除考试记录
-	if err := models.DB.Delete(&models.Exam{}, uint(idUint)).Error; err != nil {
+		if err := tx.Delete(&models.Exam{}, exam.ID).Error; err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "删除考试失败"})
 		return
 	}

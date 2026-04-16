@@ -198,6 +198,62 @@ func TestDeleteExam_Success(t *testing.T) {
 	}
 }
 
+func TestDeleteExam_PendingUnscheduledAllowed(t *testing.T) {
+	cleanup := setupExamsHandlerTestDB(t)
+	defer cleanup()
+
+	room := seedExamRoom(t)
+	user := seedExamUser(t)
+	exam := models.Exam{Name: "pending-delete", Subject: "math", RoomID: room.ID, UserID: user.ID, StartTime: time.Now(), ScheduleStatus: models.ExamSchedulePending}
+	if err := models.DB.Create(&exam).Error; err != nil {
+		t.Fatalf("failed to seed exam: %v", err)
+	}
+
+	r := setupExamsRouter()
+	w := performExamJSONRequest(t, r, http.MethodDelete, "/exams/"+fmt.Sprint(exam.ID), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var count int64
+	models.DB.Model(&models.Exam{}).Where("id = ?", exam.ID).Count(&count)
+	if count != 0 {
+		t.Fatalf("expected pending exam deleted, still found %d", count)
+	}
+}
+
+func TestDeleteExam_DeletesRelatedAlerts(t *testing.T) {
+	cleanup := setupExamsHandlerTestDB(t)
+	defer cleanup()
+
+	room := seedExamRoom(t)
+	user := seedExamUser(t)
+	exam := models.Exam{Name: "alert-cascade-delete", Subject: "english", RoomID: room.ID, UserID: user.ID, StartTime: time.Now(), ScheduleStatus: models.ExamSchedulePending}
+	if err := models.DB.Create(&exam).Error; err != nil {
+		t.Fatalf("failed to seed exam: %v", err)
+	}
+	alert1 := models.Alert{ExamID: exam.ID, Type: models.AlertTypePhoneCheating, SeatNumber: "A1", Message: "issue1"}
+	alert2 := models.Alert{ExamID: exam.ID, Type: models.AlertTypeLookAround, SeatNumber: "A2", Message: "issue2"}
+	if err := models.DB.Create(&alert1).Error; err != nil {
+		t.Fatalf("failed to seed alert1: %v", err)
+	}
+	if err := models.DB.Create(&alert2).Error; err != nil {
+		t.Fatalf("failed to seed alert2: %v", err)
+	}
+
+	r := setupExamsRouter()
+	w := performExamJSONRequest(t, r, http.MethodDelete, "/exams/"+fmt.Sprint(exam.ID), "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	var alertCount int64
+	models.DB.Model(&models.Alert{}).Where("exam_id = ?", exam.ID).Count(&alertCount)
+	if alertCount != 0 {
+		t.Fatalf("expected alerts deleted with exam, still found %d", alertCount)
+	}
+}
+
 func TestDeleteExam_ActiveExamConflict(t *testing.T) {
 	cleanup := setupExamsHandlerTestDB(t)
 	defer cleanup()
