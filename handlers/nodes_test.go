@@ -360,6 +360,33 @@ func TestDeleteNode(t *testing.T) {
 			},
 		},
 		{
+			name: "delete node clears linked exams node_id",
+			id:   "1",
+			setup: func(t *testing.T) {
+				user := seedNodeUser(t, "proctor-for-exam", models.Proctor)
+				room := seedNodeRoom(t)
+				node := seedNode(t, "node-with-exam", "m1", "10.0.0.3:8080", models.NodeStatusIdle, nil)
+				_ = seedExamForNode(t, room.ID, user.ID, node.ID)
+			},
+			expectedCode:         http.StatusOK,
+			expectedBodyContains: `"success":true`,
+			expectSuccess:        true,
+			verify: func(t *testing.T) {
+				var exam models.Exam
+				if err := models.DB.First(&exam, 1).Error; err != nil {
+					t.Fatalf("expected exam to remain, got err=%v", err)
+				}
+				if exam.NodeID != nil {
+					t.Fatalf("expected exam.node_id to be nil after node deletion, got %v", *exam.NodeID)
+				}
+
+				var node models.Node
+				if err := models.DB.Unscoped().Where("id = ?", 1).First(&node).Error; err == nil {
+					t.Fatalf("expected node to be hard deleted")
+				}
+			},
+		},
+		{
 			name: "delete node occupied",
 			id:   "1",
 			setup: func(t *testing.T) {
@@ -387,7 +414,7 @@ func TestDeleteNode(t *testing.T) {
 				}
 			},
 			expectedCode:         http.StatusConflict,
-			expectedBodyContains: "无法删除节点：存在关联考试记录",
+			expectedBodyContains: "无法删除节点：存在关联记录",
 			expectSuccess:        false,
 			verify: func(t *testing.T) {
 				var node models.Node

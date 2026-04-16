@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func CreateNode(c *gin.Context) {
@@ -95,18 +96,29 @@ func DeleteNode(c *gin.Context) {
 		return
 	}
 
-	result := models.DB.Unscoped().Where("id = ?", c.Param("id")).Delete(&models.Node{})
-	if result.Error != nil {
-		if isForeignKeyConstraintError(result.Error) {
+	if err := models.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Model(&models.Exam{}).
+			Where("node_id = ?", node.ID).
+			Updates(map[string]any{"node_id": nil}).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Unscoped().Where("id = ?", node.ID).Delete(&models.Node{}).Error; err != nil {
+			return err
+		}
+
+		return nil
+	}); err != nil {
+		if isForeignKeyConstraintError(err) {
 			c.JSON(http.StatusConflict, gin.H{
 				"success": false,
-				"error":   "无法删除节点：存在关联考试记录",
+				"error":   "无法删除节点：存在关联记录",
 			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   "删除节点失败: " + result.Error.Error(),
+			"error":   "删除节点失败: " + err.Error(),
 		})
 		return
 	}
