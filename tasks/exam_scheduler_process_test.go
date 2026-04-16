@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"cc/models"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,7 +57,7 @@ func TestProcessDueExams_OnlySchedulesOneExamPerTick(t *testing.T) {
 
 	baseNode := models.Node{
 		Token:           "token-1",
-		Model:           "m1",
+		NodeModel:       "m1",
 		Address:         strings.TrimPrefix(nodeServer.URL, "http://"),
 		Status:          models.NodeStatusIdle,
 		Version:         "1.0.0",
@@ -154,7 +155,7 @@ func TestProcessDueExams_SameStartTimeSchedulesInStableOrder(t *testing.T) {
 
 	baseNode := models.Node{
 		Token:           "token-a",
-		Model:           "m1",
+		NodeModel:       "m1",
 		Address:         strings.TrimPrefix(nodeServer.URL, "http://"),
 		Status:          models.NodeStatusIdle,
 		Version:         "1.0.0",
@@ -235,5 +236,176 @@ func TestProcessDueExams_SameStartTimeSchedulesInStableOrder(t *testing.T) {
 	}
 	if secondB.ScheduleStatus != models.ExamScheduleRunning {
 		t.Fatalf("expected examB running after second tick, got %s", secondB.ScheduleStatus)
+	}
+}
+
+func TestProcessDueExams_SkipsDirtyIdleNodeWithCurrentExamID(t *testing.T) {
+	db := setupExamSchedulerProcessTestDB(t)
+	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+
+	notifyCount := 0
+	nodeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/exam/start" && r.Method == http.MethodPost {
+			notifyCount++
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"success": true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success": false, "error": "not found"}`))
+	}))
+	defer nodeServer.Close()
+
+	user := models.User{Username: "scheduler-user", Password: "password", Role: "proctor"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("create user failed: %v", err)
+	}
+
+	room := models.Room{Name: "R301", Building: "A", RTSPUrl: "rtsp://test"}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("create room failed: %v", err)
+	}
+
+	dirtyExamID := uint(999)
+	dirtyNode := models.Node{
+		Name:            "dirty-idle-node",
+		Token:           "dirty-token",
+		NodeModel:       "m1",
+		Address:         strings.TrimPrefix(nodeServer.URL, "http://"),
+		Status:          models.NodeStatusIdle,
+		Version:         "1.0.0",
+		CurrentExamID:   &dirtyExamID,
+		LastHeartbeatAt: time.Now(),
+	}
+	if err := db.Create(&dirtyNode).Error; err != nil {
+		t.Fatalf("create dirty node failed: %v", err)
+	}
+
+	cleanNode := models.Node{
+		Name:            "clean-idle-node",
+		Token:           "clean-token",
+		NodeModel:       "m1",
+		Address:         strings.TrimPrefix(nodeServer.URL, "http://"),
+		Status:          models.NodeStatusIdle,
+		Version:         "1.0.0",
+		LastHeartbeatAt: time.Now(),
+	}
+	if err := db.Create(&cleanNode).Error; err != nil {
+		t.Fatalf("create clean node failed: %v", err)
+	}
+
+	exam := models.Exam{
+		Name:            "Exam-Dirty-Node-Bypass",
+		Subject:         "Physics",
+		RoomID:          room.ID,
+		UserID:          user.ID,
+		StartTime:       time.Now().Add(-1 * time.Minute),
+		DurationSeconds: 3600,
+		ScheduleStatus:  models.ExamSchedulePending,
+	}
+	if err := db.Create(&exam).Error; err != nil {
+		t.Fatalf("create exam failed: %v", err)
+	}
+
+	processDueExams()
+
+	if notifyCount != 1 {
+		t.Fatalf("expected 1 notification, got %d", notifyCount)
+	}
+
+	var reloadedExam models.Exam
+	if err := db.First(&reloadedExam, exam.ID).Error; err != nil {
+		t.Fatalf("reload exam failed: %v", err)
+	}
+	if reloadedExam.NodeID == nil {
+		t.Fatalf("expected exam assigned to a node")
+	}
+	if *reloadedExam.NodeID != cleanNode.ID {
+		t.Fatalf("expected exam assigned to clean node=%d, got %d", cleanNode.ID, *reloadedExam.NodeID)
+	}
+}
+
+func TestScheduleExamByID_DoesNotSetRunningIfExamEndedDuringNotify(t *testing.T) {
+	db := setupExamSchedulerProcessTestDB(t)
+	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+
+	var examID uint
+	nodeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/exam/start" && r.Method == http.MethodPost {
+			now := time.Now()
+			if err := db.Model(&models.Exam{}).Where("id = ?", examID).Updates(map[string]any{
+				"end_time":   now,
+				"updated_at": now,
+			}).Error; err != nil {
+				t.Fatalf("end exam in notify handler failed: %v", err)
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"success": true}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success": false, "error": "not found"}`))
+	}))
+	defer nodeServer.Close()
+
+	user := models.User{Username: "notify-race-user", Password: "password", Role: "proctor"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("create user failed: %v", err)
+	}
+
+	room := models.Room{Name: "R401", Building: "B", RTSPUrl: "rtsp://test"}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("create room failed: %v", err)
+	}
+
+	node := models.Node{
+		Name:            "notify-race-node",
+		Token:           "notify-race-token",
+		NodeModel:       "m2",
+		Address:         strings.TrimPrefix(nodeServer.URL, "http://"),
+		Status:          models.NodeStatusIdle,
+		Version:         "1.0.0",
+		LastHeartbeatAt: time.Now(),
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create node failed: %v", err)
+	}
+
+	exam := models.Exam{
+		Name:            "Exam-Notify-Race",
+		Subject:         "Chemistry",
+		RoomID:          room.ID,
+		UserID:          user.ID,
+		StartTime:       time.Now().Add(-1 * time.Minute),
+		DurationSeconds: 1800,
+		ScheduleStatus:  models.ExamSchedulePending,
+	}
+	if err := db.Create(&exam).Error; err != nil {
+		t.Fatalf("create exam failed: %v", err)
+	}
+	examID = exam.ID
+
+	if err := scheduleExamByID(exam.ID, false); err != nil {
+		t.Fatalf("schedule exam failed: %v", err)
+	}
+
+	var reloadedExam models.Exam
+	if err := db.First(&reloadedExam, exam.ID).Error; err != nil {
+		t.Fatalf("reload exam failed: %v", err)
+	}
+	if reloadedExam.EndTime == nil {
+		t.Fatalf("expected exam ended by concurrent notify-side update")
+	}
+	if reloadedExam.ScheduleStatus == models.ExamScheduleRunning {
+		t.Fatalf("expected exam not forced to running after it already ended")
+	}
+
+	var reloadedNode models.Node
+	if err := db.First(&reloadedNode, node.ID).Error; err != nil {
+		t.Fatalf("reload node failed: %v", err)
+	}
+	if reloadedNode.CurrentExamID != nil && *reloadedNode.CurrentExamID == exam.ID {
+		encoded, _ := json.Marshal(reloadedNode)
+		t.Fatalf("expected node lock to be released by end-exam flow, got node=%s", string(encoded))
 	}
 }

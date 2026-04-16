@@ -67,6 +67,7 @@ func RetryScheduleExam(examID uint) error {
 func scheduleExamByID(examID uint, manualRetry bool) error {
 	scheduleMutex.Lock()
 	defer scheduleMutex.Unlock()
+	_ = manualRetry
 
 	var exam models.Exam
 	var node models.Node
@@ -92,23 +93,14 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 		}
 
 		if exam.NodeID == nil {
-			available, found, findErr := pickAvailableNode(tx)
-			if findErr != nil {
-				return findErr
+			lockedNode, found, lockErr := lockAvailableNodeForExam(tx, exam)
+			if lockErr != nil {
+				return lockErr
 			}
 			if !found {
 				return errNoAvailableNode
 			}
-			node = available
-			now := time.Now()
-			if err := tx.Model(&models.Node{}).Where("id = ?", node.ID).Updates(map[string]any{
-				"status":                   models.NodeStatusBusy,
-				"current_user_id":          exam.UserID,
-				"current_user_occupied_at": now,
-				"current_exam_id":          exam.ID,
-			}).Error; err != nil {
-				return err
-			}
+			node = lockedNode
 			if err := tx.Model(&exam).Updates(map[string]any{
 				"node_id":         node.ID,
 				"schedule_status": models.ExamScheduleAssigned,
@@ -125,6 +117,13 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 				return err
 			}
 
+			if node.Status == models.NodeStatusOffline {
+				return fmt.Errorf("node %d is offline", node.ID)
+			}
+			if node.LastHeartbeatAt.Before(time.Now().Add(-1 * time.Minute)) {
+				return fmt.Errorf("node %d heartbeat expired", node.ID)
+			}
+
 			// 防止同一节点存在其他进行中的考试。
 			var conflictCount int64
 			if err := tx.Model(&models.Exam{}).
@@ -138,7 +137,7 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 
 			now := time.Now()
 			lockResult := tx.Model(&models.Node{}).
-				Where("id = ? AND (current_exam_id IS NULL OR current_exam_id = ?)", node.ID, exam.ID).
+				Where("id = ? AND status <> ? AND last_heartbeat_at >= ? AND (current_exam_id IS NULL OR current_exam_id = ?)", node.ID, models.NodeStatusOffline, time.Now().Add(-1*time.Minute), exam.ID).
 				Updates(map[string]any{
 					"status":                   models.NodeStatusBusy,
 					"current_user_id":          exam.UserID,
@@ -206,34 +205,88 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 			log.Printf("[ExamScheduler] update notify failure status failed exam=%d: %v", exam.ID, dbErr)
 		}
 		if lockedNodeInTx {
-			if dbErr := models.DB.Model(&models.Node{}).
-				Where("id = ? AND current_exam_id = ?", node.ID, exam.ID).
-				Updates(map[string]any{
-					"status":                   models.NodeStatusIdle,
-					"current_user_id":          nil,
-					"current_user_occupied_at": nil,
-					"current_exam_id":          nil,
-				}).Error; dbErr != nil {
-				log.Printf("[ExamScheduler] rollback node lock failed node=%d exam=%d: %v", node.ID, exam.ID, dbErr)
-			}
+			unlockNodeForExam(node.ID, exam.ID, "rollback")
 		}
 		return err
 	}
 
-	if err := models.DB.Model(&models.Exam{}).Where("id = ?", exam.ID).Updates(map[string]any{
+	updateRunning := models.DB.Model(&models.Exam{}).Where("id = ? AND end_time IS NULL", exam.ID).Updates(map[string]any{
 		"schedule_status": models.ExamScheduleRunning,
 		"schedule_error":  "",
-	}).Error; err != nil {
-		return err
+	})
+	if updateRunning.Error != nil {
+		return updateRunning.Error
+	}
+	if updateRunning.RowsAffected == 0 {
+		log.Printf("[ExamScheduler] skip set running because exam=%d already ended", exam.ID)
+		if lockedNodeInTx {
+			unlockNodeForExam(node.ID, exam.ID, "ended-before-running")
+		}
 	}
 
 	return nil
 }
 
+func unlockNodeForExam(nodeID, examID uint, reason string) {
+	if dbErr := models.DB.Model(&models.Node{}).
+		Where("id = ? AND status = ? AND current_exam_id = ?", nodeID, models.NodeStatusBusy, examID).
+		Updates(map[string]any{
+			"status":                   models.NodeStatusIdle,
+			"current_user_id":          nil,
+			"current_user_occupied_at": nil,
+			"current_exam_id":          nil,
+		}).Error; dbErr != nil {
+		log.Printf("[ExamScheduler] unlock node failed node=%d exam=%d reason=%s: %v", nodeID, examID, reason, dbErr)
+	}
+	if dbErr := models.DB.Model(&models.Node{}).
+		Where("id = ? AND status <> ? AND current_exam_id = ?", nodeID, models.NodeStatusBusy, examID).
+		Updates(map[string]any{
+			"current_user_id":          nil,
+			"current_user_occupied_at": nil,
+			"current_exam_id":          nil,
+		}).Error; dbErr != nil {
+		log.Printf("[ExamScheduler] unlock node exam cleanup failed node=%d exam=%d reason=%s: %v", nodeID, examID, reason, dbErr)
+	}
+}
+
+func lockAvailableNodeForExam(tx *gorm.DB, exam models.Exam) (models.Node, bool, error) {
+	for i := 0; i < 5; i++ {
+		candidate, found, err := pickAvailableNode(tx)
+		if err != nil {
+			return models.Node{}, false, err
+		}
+		if !found {
+			return models.Node{}, false, nil
+		}
+
+		now := time.Now()
+		lockResult := tx.Model(&models.Node{}).
+			Where("id = ? AND status = ? AND current_user_id IS NULL AND current_exam_id IS NULL AND last_heartbeat_at >= ?", candidate.ID, models.NodeStatusIdle, now.Add(-1*time.Minute)).
+			Updates(map[string]any{
+				"status":                   models.NodeStatusBusy,
+				"current_user_id":          exam.UserID,
+				"current_user_occupied_at": now,
+				"current_exam_id":          exam.ID,
+			})
+		if lockResult.Error != nil {
+			return models.Node{}, false, lockResult.Error
+		}
+		if lockResult.RowsAffected > 0 {
+			candidate.Status = models.NodeStatusBusy
+			candidate.CurrentUserID = &exam.UserID
+			candidate.CurrentExamID = &exam.ID
+			candidate.CurrentUserOccupiedAt = &now
+			return candidate, true, nil
+		}
+	}
+
+	return models.Node{}, false, nil
+}
+
 func pickAvailableNode(tx *gorm.DB) (models.Node, bool, error) {
 	timeout := time.Now().Add(-1 * time.Minute)
 	var node models.Node
-	result := tx.Where("status = ? AND current_user_id IS NULL AND last_heartbeat_at >= ?", models.NodeStatusIdle, timeout).
+	result := tx.Where("status = ? AND current_user_id IS NULL AND current_exam_id IS NULL AND last_heartbeat_at >= ?", models.NodeStatusIdle, timeout).
 		Order("id asc").
 		Limit(1).
 		Find(&node)
