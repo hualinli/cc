@@ -34,6 +34,7 @@ type Exam struct {
 	EndTime         *time.Time `gorm:"index" json:"end_time"`
 	ScheduleStatus  string     `gorm:"not null;default:pending;index" json:"schedule_status"`
 	ScheduleError   string     `json:"schedule_error,omitempty"`
+	Remark          string     `gorm:"default:''" json:"remark,omitempty"`
 	ExamineeCount   int        `gorm:"default:0" json:"examinee_count"`
 
 	// 关联

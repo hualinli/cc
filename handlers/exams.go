@@ -209,6 +209,7 @@ func UpdateExam(c *gin.Context) {
 		DurationSeconds *int       `json:"duration_seconds"`
 		DurationMinutes *int       `json:"duration_minutes"`
 		ExamineeCount   *int       `json:"examinee_count"`
+		Remark          *string    `json:"remark"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "请求参数错误"})
@@ -282,6 +283,9 @@ func UpdateExam(c *gin.Context) {
 		}
 		updates["examinee_count"] = *input.ExamineeCount
 	}
+	if input.Remark != nil {
+		updates["remark"] = strings.TrimSpace(*input.Remark)
+	}
 
 	if len(updates) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "没有可更新字段"})
@@ -328,6 +332,7 @@ func GetExams(c *gin.Context) {
 		ExamineeCount   int          `json:"examinee_count"`
 		ScheduleStatus  string       `json:"schedule_status"`
 		ScheduleError   string       `json:"schedule_error,omitempty"`
+		Remark          string       `json:"remark,omitempty"`
 		CreatedAt       time.Time    `json:"created_at"`
 		UpdatedAt       time.Time    `json:"updated_at"`
 		Room            *models.Room `json:"room,omitempty"`
@@ -349,6 +354,7 @@ func GetExams(c *gin.Context) {
 		ExamineeCount:   exam.ExamineeCount,
 		ScheduleStatus:  exam.ScheduleStatus,
 		ScheduleError:   exam.ScheduleError,
+		Remark:          exam.Remark,
 		CreatedAt:       exam.CreatedAt,
 		UpdatedAt:       exam.UpdatedAt,
 		Room:            exam.Room,

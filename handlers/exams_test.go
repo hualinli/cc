@@ -269,6 +269,30 @@ func TestUpdateExam_Success(t *testing.T) {
 	}
 }
 
+func TestUpdateExam_UpdateRemark(t *testing.T) {
+	cleanup := setupExamsHandlerTestDB(t)
+	defer cleanup()
+
+	room := seedExamRoom(t)
+	user := seedExamUser(t)
+	exam := models.Exam{Name: "update-test", Subject: "math", RoomID: room.ID, UserID: user.ID, StartTime: time.Now(), ScheduleStatus: models.ExamSchedulePending}
+	if err := models.DB.Create(&exam).Error; err != nil {
+		t.Fatalf("failed to seed exam: %v", err)
+	}
+
+	r := setupExamsRouter()
+	body := `{"remark":"考试现场遇到临时问题"}`
+	w := performExamJSONRequest(t, r, http.MethodPut, "/exams/"+fmt.Sprint(exam.ID), body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	resp := decodeExamResp(t, w)
+	data := resp["data"].(map[string]any)
+	if data["remark"] != "考试现场遇到临时问题" {
+		t.Fatalf("expected remark updated, got %v", data["remark"])
+	}
+}
+
 func TestUpdateExam_InvalidSubjectEmpty(t *testing.T) {
 	cleanup := setupExamsHandlerTestDB(t)
 	defer cleanup()
