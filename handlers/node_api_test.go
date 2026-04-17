@@ -234,6 +234,59 @@ func TestSyncTaskStart_CreateExamSuccess(t *testing.T) {
 	}
 }
 
+func TestSyncTaskStart_NoExamIDWithActiveExamReturnsSameID(t *testing.T) {
+	cleanup := setupNodeAPIHandlerTestDB(t)
+	defer cleanup()
+
+	user := seedNodeAPIUser(t)
+	room := seedNodeAPIRoom(t)
+	node := seedNodeAPIModel(t, "start-existing-active-node")
+	nodeID := node.ID
+	now := time.Now()
+	exam := models.Exam{
+		Name:            "active exam",
+		Subject:         "math",
+		RoomID:          room.ID,
+		NodeID:          &nodeID,
+		UserID:          user.ID,
+		DurationSeconds: 3600,
+		StartTime:       now,
+		ScheduleStatus:  models.ExamScheduleRunning,
+	}
+	if err := models.DB.Create(&exam).Error; err != nil {
+		t.Fatalf("failed to seed active exam: %v", err)
+	}
+
+	if err := models.DB.Model(&models.Node{}).Where("id = ?", node.ID).Updates(map[string]any{
+		"current_user_id":          user.ID,
+		"current_user_occupied_at": now,
+		"status":                   models.NodeStatusBusy,
+		"current_exam_id":          exam.ID,
+	}).Error; err != nil {
+		t.Fatalf("failed to occupy node: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"action":"start","room_id":%d,"subject":"math","start_time":"%s","duration_minutes":120}`,
+		room.ID, now.Format(time.RFC3339))
+	w := performNodeAPIJSONRequest(t, http.MethodPost, "/sync-task", body, node.ID, SyncTask)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	resp := decodeNodeAPIResp(t, w)
+	if resp["exam_id"] != float64(exam.ID) {
+		t.Fatalf("expected existing exam_id %d, got %v", exam.ID, resp["exam_id"])
+	}
+
+	var examCount int64
+	if err := models.DB.Model(&models.Exam{}).Where("node_id = ? AND end_time IS NULL", node.ID).Count(&examCount).Error; err != nil {
+		t.Fatalf("failed to count active exams: %v", err)
+	}
+	if examCount != 1 {
+		t.Fatalf("expected exactly 1 active exam, got %d", examCount)
+	}
+}
+
 func TestSyncTaskStart_IdempotentAssignedExamReturnsSameID(t *testing.T) {
 	cleanup := setupNodeAPIHandlerTestDB(t)
 	defer cleanup()

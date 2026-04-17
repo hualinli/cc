@@ -222,6 +222,28 @@ func SyncTask(c *gin.Context) {
 				return fmt.Errorf("节点未被任何监考员占用")
 			}
 
+			// 节点重复上报 start（但未携带 exam_id）时，返回当前进行中的考试，避免重复创建。
+			var activeExam models.Exam
+			activeExamErr := tx.Where("node_id = ? AND end_time IS NULL", nodeIDUint).
+				Order("id desc").
+				Limit(1).
+				Find(&activeExam).Error
+			if activeExamErr != nil {
+				return activeExamErr
+			}
+			if activeExam.ID != 0 {
+				now := time.Now()
+				if err := tx.Model(&currentNode).Updates(map[string]any{
+					"current_exam_id":          activeExam.ID,
+					"current_user_occupied_at": now,
+					"status":                   models.NodeStatusBusy,
+				}).Error; err != nil {
+					return err
+				}
+				responseExamID = activeExam.ID
+				return nil
+			}
+
 			nodeIDPtr := nodeIDUint
 			exam := models.Exam{
 				Name:            input.Subject + "考试",
@@ -597,6 +619,13 @@ func clearNodeOccupation(updateData map[string]any) {
 }
 
 func mapSyncTaskStartErrorStatus(errMsg string) int {
+	if strings.Contains(errMsg, "UNIQUE constraint failed: exams.node_id") {
+		return http.StatusConflict
+	}
+	if strings.Contains(strings.ToLower(errMsg), "duplicate") {
+		return http.StatusConflict
+	}
+
 	switch errMsg {
 	case "节点未被任何监考员占用", "exam_id 无效", "room_id 与考试不匹配":
 		return http.StatusBadRequest
