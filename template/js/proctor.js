@@ -209,8 +209,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ old_password, new_password })
             });
-            if (handleAuthFailure(response)) return;
             const result = await parseJsonSafe(response);
+
+            // 改密接口会用 401 表示旧密码错误，不能按未登录处理直接跳转。
+            if (response.status === 401 && result && result.error === '旧密码错误') {
+                alert(result.error);
+                return;
+            }
+            if (handleAuthFailure(response)) return;
+
             if (response.ok && result.success) {
                 alert('密码修改成功，请重新登录');
                 window.location.href = '/login';
