@@ -87,13 +87,13 @@ func (m *mockNode) runFlow() (uint, error) {
 		}
 
 		resp, code, err = m.postJSON("/node-api/v1/alerts", map[string]any{
-			"exam_id":      examID,
-			"room_id":      m.roomID,
-			"type":         string(models.AlertTypePhoneCheating),
-			"seat_number":  fmt.Sprintf("A%d", i+1),
-			"message":      "mock node alert",
-			"x":            0.1,
-			"y":            0.2,
+			"exam_id":     examID,
+			"room_id":     m.roomID,
+			"type":        string(models.AlertTypePhoneCheating),
+			"seat_number": fmt.Sprintf("A%d", i+1),
+			"message":     "mock node alert",
+			"x":           0.1,
+			"y":           0.2,
 		})
 		if err != nil {
 			return 0, err
@@ -279,6 +279,5 @@ func TestMockNodeFullFlow(t *testing.T) {
 		t.Fatalf("expected node current_user_id nil, got %v", reloadedNode.CurrentUserID)
 	}
 }
-
 
 // TODO: 节点异常流程测试，如心跳停止等。

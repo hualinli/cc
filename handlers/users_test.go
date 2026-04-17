@@ -711,9 +711,9 @@ func TestChangePassword(t *testing.T) {
 			expectSuccess:        false,
 		},
 		{
-			name:          "user not found",
-			sessionUserID: uint(999),
-			requestBody:   `{"old_password":"old-pass","new_password":"new-pass"}`,
+			name:                 "user not found",
+			sessionUserID:        uint(999),
+			requestBody:          `{"old_password":"old-pass","new_password":"new-pass"}`,
 			expectedCode:         http.StatusNotFound,
 			expectedBodyContains: "用户不存在",
 			expectSuccess:        false,

@@ -98,14 +98,13 @@ func main() {
 			adminAPI.DELETE("/users/:id", handlers.DeleteUser)
 			adminAPI.PUT("/users/:id", handlers.UpdateUser)
 
-
 			// 教室管理
 			adminAPI.GET("/rooms", handlers.ListRooms)
 			adminAPI.GET("/rooms/:id", handlers.GetRoom)
 			adminAPI.POST("/rooms", handlers.CreateRoom)
 			adminAPI.DELETE("/rooms/:id", handlers.DeleteRoom)
 			adminAPI.PUT("/rooms/:id", handlers.UpdateRoom)
-			
+
 			// 节点管理
 			adminAPI.GET("/nodes", handlers.ListNodes)
 			adminAPI.GET("/nodes/stats", handlers.GetNodeStats)
