@@ -42,7 +42,7 @@ func processDueExams() {
 	now := time.Now()
 	var dueExam models.Exam
 	result := models.DB.Where("start_time <= ? AND end_time IS NULL AND schedule_status IN ?", now,
-		[]string{models.ExamSchedulePending, models.ExamScheduleAssigned, models.ExamScheduleNotifyFail, models.ExamScheduleAssignFail}).
+		[]string{models.ExamSchedulePending, models.ExamScheduleAssigned}).
 		Order("start_time asc, created_at asc, id asc").
 		Limit(1).
 		Find(&dueExam)

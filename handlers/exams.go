@@ -157,7 +157,7 @@ func DeleteExam(c *gin.Context) {
 	}
 
 	if err := models.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("exam_id = ?", exam.ID).Delete(&models.Alert{}).Error; err != nil {
+		if err := tx.Unscoped().Where("exam_id = ?", exam.ID).Delete(&models.Alert{}).Error; err != nil {
 			return err
 		}
 
@@ -172,7 +172,7 @@ func DeleteExam(c *gin.Context) {
 			return err
 		}
 
-		if err := tx.Delete(&models.Exam{}, exam.ID).Error; err != nil {
+		if err := tx.Unscoped().Delete(&models.Exam{}, exam.ID).Error; err != nil {
 			return err
 		}
 
@@ -382,7 +382,8 @@ func GetExams(c *gin.Context) {
 
 func ListExams(c *gin.Context) {
 	var exams []models.Exam
-	query := models.DB.Preload("Room").Preload("Node").Preload("User")
+	query := models.DB.Preload("Room").Preload("Node").Preload("User").
+		Where("exams.schedule_status NOT IN ?", []string{models.ExamScheduleAssignFail, models.ExamScheduleNotifyFail})
 
 	// 过滤：按楼宇 (需要关联查询)
 	building := c.Query("building")
