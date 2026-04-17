@@ -12,11 +12,27 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // NodeHeartbeat 处理节点心跳
 func NodeHeartbeat(c *gin.Context) {
-	nodeID, _ := c.Get("node_id")
+	nodeID, exist := c.Get("node_id")
+	if !exist {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"error":   "未提供节点ID",
+		})
+		return
+	}
+	nodeIDUint, ok := nodeID.(uint)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "内部错误：节点ID类型异常",
+		})
+		return
+	}
 
 	var input struct {
 		Status  string         `json:"status"`
@@ -31,9 +47,21 @@ func NodeHeartbeat(c *gin.Context) {
 		return
 	}
 
+	if input.Status != "" {
+		switch input.Status {
+		case models.NodeStatusIdle, models.NodeStatusBusy, models.NodeStatusError:
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "无效的节点状态",
+			})
+			return
+		}
+	}
+
 	// 查询当前节点状态
 	var node models.Node
-	if err := models.DB.Where("id = ?", nodeID).First(&node).Error; err != nil {
+	if err := models.DB.Where("id = ?", nodeIDUint).First(&node).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"error":   "节点不存在",
@@ -42,17 +70,38 @@ func NodeHeartbeat(c *gin.Context) {
 	}
 
 	// 更新数据库状态
+	reportedAddress := c.ClientIP() + ":8002"
 	updateData := map[string]any{
 		"last_heartbeat_at": time.Now(),
 	}
-
-	// 心跳时更新节点的真实状态（idle/busy/error）
-	// 但如果节点离线则不更新（由清理任务处理离线状态）
-	if input.Status != "" && input.Status != models.NodeStatusOffline {
-		updateData["status"] = input.Status
+	if node.Address != reportedAddress {
+		updateData["address"] = reportedAddress // 心跳时按需更新节点地址，减少无效写入
 	}
 
-	models.DB.Model(&models.Node{}).Where("id = ?", nodeID).Updates(updateData)
+	// 心跳仅接收节点运行态（idle/busy/error）。
+	// offline 由 cleanup 根据超时统一写入，避免节点自行宣告离线。
+	if input.Status != "" {
+		switch input.Status {
+		case models.NodeStatusIdle:
+			// 节点上报 idle：仅更新 node 侧状态与占用字段。
+			// 其他表的收敛（如自动关考）交由 cleanup 任务统一处理。
+			clearNodeOccupation(updateData)
+			setNodeStatusIfChanged(updateData, node.Status, models.NodeStatusIdle)
+		case models.NodeStatusBusy:
+			setNodeStatusIfChanged(updateData, node.Status, input.Status)
+		case models.NodeStatusError:
+			clearNodeOccupation(updateData)
+			setNodeStatusIfChanged(updateData, node.Status, models.NodeStatusError)
+		}
+	}
+
+	if err := models.DB.Model(&models.Node{}).Where("id = ?", nodeIDUint).UpdateColumns(updateData).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "更新节点状态失败",
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -61,7 +110,14 @@ func NodeHeartbeat(c *gin.Context) {
 
 // SyncTask 同步考试状态
 func SyncTask(c *gin.Context) {
-	nodeID, _ := c.Get("node_id")
+	nodeID, exist := c.Get("node_id")
+	if !exist {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"error":   "未提供节点ID",
+		})
+		return
+	}
 	nodeIDUint, ok := nodeID.(uint)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -101,7 +157,44 @@ func SyncTask(c *gin.Context) {
 
 	switch input.Action {
 	case "start":
-		// 开始考试
+		// 幂等确认：节点重复上报时只校验 exam 是否属于本节点并返回。
+		if input.ExamID != 0 {
+			var exam models.Exam
+			result := models.DB.Where("id = ?", input.ExamID).Limit(1).Find(&exam)
+			if result.Error != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"error":   "查询考试失败",
+				})
+				return
+			}
+			if result.RowsAffected == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"success": false,
+					"error":   "exam_id 无效",
+				})
+				return
+			}
+			if exam.NodeID == nil || *exam.NodeID != nodeIDUint {
+				c.JSON(http.StatusForbidden, gin.H{
+					"success": false,
+					"error":   "exam_id 不属于当前节点",
+				})
+				return
+			}
+			if exam.EndTime != nil {
+				c.JSON(http.StatusConflict, gin.H{
+					"success": false,
+					"error":   "考试已结束",
+				})
+				return
+			}
+
+			c.JSON(http.StatusOK, gin.H{"success": true, "exam_id": exam.ID})
+			return
+		}
+
+		// 正常开考：校验房间存在后创建考试并返回 exam_id。
 		if input.RoomID == 0 || input.Subject == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"success": false,
@@ -110,16 +203,6 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
-		// 检查节点是否被占用（指针nil检查）
-		if node.CurrentUserID == nil {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"success": false,
-				"error":   "节点未被任何监考员占用",
-			})
-			return
-		}
-
-		// 检查 Room 是否存在
 		var room models.Room
 		if err := models.DB.First(&room, input.RoomID).Error; err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -129,35 +212,77 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
-		exam := models.Exam{
-			Name:          input.Subject + "考试",
-			Subject:       input.Subject,
-			RoomID:        input.RoomID,
-			NodeID:        nodeIDUint,
-			UserID:        *node.CurrentUserID, // 当前占用节点的用户
-			StartTime:     input.StartTime,
-			EndTime:       nil, // 开始时结束时间仍为 NULL
-			ExamineeCount: input.ExamineeCount,
-		}
+		var responseExamID uint
+		txErr := models.DB.Transaction(func(tx *gorm.DB) error {
+			var currentNode models.Node
+			if err := tx.First(&currentNode, nodeIDUint).Error; err != nil {
+				return err
+			}
+			if currentNode.CurrentUserID == nil {
+				return fmt.Errorf("节点未被任何监考员占用")
+			}
 
-		if err := models.DB.Create(&exam).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
+			// 节点重复上报 start（但未携带 exam_id）时，返回当前进行中的考试，避免重复创建。
+			var activeExam models.Exam
+			activeExamErr := tx.Where("node_id = ? AND end_time IS NULL", nodeIDUint).
+				Order("id desc").
+				Limit(1).
+				Find(&activeExam).Error
+			if activeExamErr != nil {
+				return activeExamErr
+			}
+			if activeExam.ID != 0 {
+				now := time.Now()
+				if err := tx.Model(&currentNode).Updates(map[string]any{
+					"current_exam_id":          activeExam.ID,
+					"current_user_occupied_at": now,
+					"status":                   models.NodeStatusBusy,
+				}).Error; err != nil {
+					return err
+				}
+				responseExamID = activeExam.ID
+				return nil
+			}
+
+			nodeIDPtr := nodeIDUint
+			exam := models.Exam{
+				Name:            input.Subject + "考试",
+				Subject:         input.Subject,
+				RoomID:          input.RoomID,
+				NodeID:          &nodeIDPtr,
+				UserID:          *currentNode.CurrentUserID,
+				DurationSeconds: input.DurationMinutes * 60,
+				StartTime:       input.StartTime,
+				EndTime:         nil,
+				ScheduleStatus:  models.ExamScheduleRunning,
+				ExamineeCount:   input.ExamineeCount,
+			}
+			if err := tx.Create(&exam).Error; err != nil {
+				return err
+			}
+
+			now := time.Now()
+			if err := tx.Model(&currentNode).Updates(map[string]any{
+				"current_exam_id":          exam.ID,
+				"current_user_occupied_at": now,
+				"status":                   models.NodeStatusBusy,
+			}).Error; err != nil {
+				return err
+			}
+
+			responseExamID = exam.ID
+			return nil
+		})
+		if txErr != nil {
+			status := mapSyncTaskStartErrorStatus(txErr.Error())
+			c.JSON(status, gin.H{
 				"success": false,
-				"error":   "创建考试记录失败: " + err.Error(),
+				"error":   txErr.Error(),
 			})
 			return
 		}
 
-		// 更新节点的当前考试ID并设置状态为 busy
-		models.DB.Model(&node).Updates(map[string]any{
-			"current_exam_id": exam.ID,
-			"status":          models.NodeStatusBusy,
-		})
-
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"exam_id": exam.ID,
-		})
+		c.JSON(http.StatusOK, gin.H{"success": true, "exam_id": responseExamID})
 
 	case "stop":
 		// 结束考试
@@ -169,21 +294,72 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
-		// 更新考试结束时间
-		if err := models.DB.Model(&models.Exam{}).Where("id = ?", input.ExamID).Update("end_time", time.Now()).Error; err != nil {
+		var exam models.Exam
+		result := models.DB.Where("id = ?", input.ExamID).Limit(1).Find(&exam)
+		if result.Error != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
-				"error":   "更新考试状态失败",
+				"error":   "查询考试失败",
+			})
+			return
+		}
+		if result.RowsAffected == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "exam_id 无效",
+			})
+			return
+		}
+		if exam.NodeID == nil || *exam.NodeID != nodeIDUint {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   "exam_id 不属于当前节点",
 			})
 			return
 		}
 
-		// 清除节点的当前考试ID和用户ID，并恢复空闲状态
-		models.DB.Model(&node).Updates(map[string]any{
-			"current_exam_id": nil,
-			"current_user_id": nil,
-			"status":          models.NodeStatusIdle,
-		})
+		nodeReleaseWarning := ""
+		if err := models.DB.Transaction(func(tx *gorm.DB) error {
+			result := tx.Model(&models.Exam{}).
+				Where("id = ? AND end_time IS NULL", input.ExamID).
+				Update("end_time", time.Now())
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return nil
+			}
+
+			nodeResult := tx.Model(&models.Node{}).
+				Where("id = ? AND current_exam_id = ?", nodeIDUint, input.ExamID).
+				Updates(map[string]any{
+					"current_exam_id":          nil,
+					"current_user_id":          nil,
+					"current_user_occupied_at": nil,
+					"status":                   models.NodeStatusIdle,
+				})
+			if nodeResult.Error != nil {
+				return nodeResult.Error
+			}
+			if nodeResult.RowsAffected == 0 {
+				nodeReleaseWarning = "节点当前考试状态已变化，考试已结束但节点未释放"
+			}
+			return nil
+		}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "更新考试状态失败: " + err.Error(),
+			})
+			return
+		}
+
+		if nodeReleaseWarning != "" {
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"warning": nodeReleaseWarning,
+			})
+			return
+		}
 
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
@@ -199,15 +375,54 @@ func SyncTask(c *gin.Context) {
 			return
 		}
 
+		var exam models.Exam
+		examResult := models.DB.Where("id = ?", input.ExamID).Limit(1).Find(&exam)
+		if examResult.Error != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"error":   "查询考试失败",
+			})
+			return
+		}
+		if examResult.RowsAffected == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "exam_id 无效",
+			})
+			return
+		}
+		if exam.NodeID == nil || *exam.NodeID != nodeIDUint {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"error":   "exam_id 不属于当前节点",
+			})
+			return
+		}
+		if exam.EndTime != nil {
+			c.JSON(http.StatusConflict, gin.H{
+				"success": false,
+				"error":   "考试已结束",
+			})
+			return
+		}
+
 		// 更新考场人数
 		updateData := map[string]any{
 			"examinee_count": input.ExamineeCount,
 		}
 
-		if err := models.DB.Model(&models.Exam{}).Where("id = ?", input.ExamID).Updates(updateData).Error; err != nil {
+		updateResult := models.DB.Model(&models.Exam{}).Where("id = ?", input.ExamID).Updates(updateData)
+		if updateResult.Error != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"success": false,
 				"error":   "同步人数失败",
+			})
+			return
+		}
+		if updateResult.RowsAffected == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "exam_id 无效",
 			})
 			return
 		}
@@ -265,6 +480,15 @@ func ReportAlert(c *gin.Context) {
 		return
 	}
 
+	normalizedType, ok := normalizeIncomingAlertType(input.Type)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "type 无效",
+		})
+		return
+	}
+
 	// 处理上传的图片 (表单模式支持，JSON模式暂不支持直接传图)
 	var dbPath string
 	file, err := c.FormFile("image")
@@ -304,17 +528,32 @@ func ReportAlert(c *gin.Context) {
 
 	// 校验 exam 必须存在且必须属于当前节点
 	var exam models.Exam
-	if err := models.DB.Where("id = ?", input.ExamID).First(&exam).Error; err != nil {
+	result := models.DB.Where("id = ?", input.ExamID).Limit(1).Find(&exam)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "查询考试失败",
+		})
+		return
+	}
+	if result.RowsAffected == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"error":   "exam_id 无效",
 		})
 		return
 	}
-	if exam.NodeID != nodeIDUint {
+	if exam.NodeID == nil || *exam.NodeID != nodeIDUint {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
 			"error":   "exam_id 不属于当前节点",
+		})
+		return
+	}
+	if exam.EndTime != nil {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   "考试已结束，拒绝上报告警",
 		})
 		return
 	}
@@ -328,7 +567,7 @@ func ReportAlert(c *gin.Context) {
 
 	alert := models.Alert{
 		ExamID:      input.ExamID,
-		Type:        models.AlertType(input.Type),
+		Type:        normalizedType,
 		SeatNumber:  input.SeatNumber,
 		X:           input.X,
 		Y:           input.Y,
@@ -337,7 +576,7 @@ func ReportAlert(c *gin.Context) {
 	}
 
 	if alert.Message == "" {
-		alert.Message = fmt.Sprintf("座位 %s 发生异常: %s", input.SeatNumber, input.Type)
+		alert.Message = fmt.Sprintf("座位 %s 发生异常: %s", input.SeatNumber, string(normalizedType))
 	}
 
 	if err := models.DB.Create(&alert).Error; err != nil {
@@ -366,4 +605,53 @@ func parseFloat(s string) float64 {
 	var result float64
 	fmt.Sscanf(s, "%f", &result)
 	return result
+}
+
+func setNodeStatusIfChanged(updateData map[string]any, currentStatus string, targetStatus string) {
+	if currentStatus != targetStatus {
+		updateData["status"] = targetStatus
+	}
+}
+
+func clearNodeOccupation(updateData map[string]any) {
+	updateData["current_exam_id"] = nil
+	updateData["current_user_id"] = nil
+	updateData["current_user_occupied_at"] = nil
+}
+
+func normalizeIncomingAlertType(raw string) (models.AlertType, bool) {
+	normalized := strings.TrimSpace(strings.ToLower(raw))
+	if normalized == "" {
+		return "", false
+	}
+
+	// 仅做格式标准化，不做语义别名映射。
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	typeValue := models.AlertType(normalized)
+	if !isValidAlertType(typeValue) {
+		return "", false
+	}
+
+	return typeValue, true
+}
+
+func mapSyncTaskStartErrorStatus(errMsg string) int {
+	if strings.Contains(errMsg, "UNIQUE constraint failed: exams.node_id") {
+		return http.StatusConflict
+	}
+	if strings.Contains(strings.ToLower(errMsg), "duplicate") {
+		return http.StatusConflict
+	}
+
+	switch errMsg {
+	case "节点未被任何监考员占用", "exam_id 无效", "room_id 与考试不匹配":
+		return http.StatusBadRequest
+	case "exam_id 不属于当前节点":
+		return http.StatusForbidden
+	case "考试已结束":
+		return http.StatusConflict
+	default:
+		return http.StatusInternalServerError
+	}
 }

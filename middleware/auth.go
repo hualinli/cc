@@ -3,12 +3,28 @@ package middleware
 import (
 	"cc/models"
 	"net/http"
+	"strings"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
 // 鉴权中间件
+func isJSONRequest(c *gin.Context) bool {
+	path := c.Request.URL.Path
+	if strings.HasPrefix(path, "/api") || strings.HasPrefix(path, "/node-api") {
+		return true
+	}
+	accept := c.GetHeader("Accept")
+	if strings.Contains(accept, "application/json") {
+		return true
+	}
+	if c.GetHeader("X-Requested-With") == "XMLHttpRequest" {
+		return true
+	}
+	return false
+}
+
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 获取当前 session
@@ -17,10 +33,14 @@ func AuthMiddleware() gin.HandlerFunc {
 		// 从 session 中获取用户信息
 		userID := session.Get("user_id")
 
-		// 如果没有用户信息，说明没有登录，重定向到登录页面
+		// 如果没有用户信息，说明没有登录，API 请求返回 401，否则跳转到登录页面。
 		if userID == nil {
-			c.Redirect(http.StatusFound, "/login")
-			c.Abort() // 重要：阻止继续执行后续的 handler
+			if isJSONRequest(c) {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			} else {
+				c.Redirect(http.StatusFound, "/login")
+				c.Abort()
+			}
 			return
 		}
 
@@ -37,9 +57,13 @@ func AdminMiddleware() gin.HandlerFunc {
 		// 从 session 中获取用户信息
 		userRole := session.Get("role")
 
-		// 如果没有用户信息，说明没有登录
+		// 如果没有用户信息，说明没有登录或不是管理员
 		if roleStr, ok := userRole.(string); !ok || roleStr != "admin" {
-			c.AbortWithStatus(http.StatusForbidden)
+			if isJSONRequest(c) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			} else {
+				c.AbortWithStatus(http.StatusForbidden)
+			}
 			return
 		}
 

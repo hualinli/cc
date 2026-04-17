@@ -2,3 +2,6 @@
 /uploads/
 .DS_Store
 *.md
+/bin/
+*.db-shm
+*.db-wal

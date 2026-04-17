@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"cc/models"
+	"errors"
 	"net/http"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 func LoginPostHandler(c *gin.Context) {
@@ -18,9 +20,17 @@ func LoginPostHandler(c *gin.Context) {
 	// TODO: 不安全，有枚举和暴力破解的风险，仅供调试
 	result := models.DB.Where("username = ?", username).First(&user)
 	if result.Error != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"error":   "用户不存在",
+			})
+			return
+		}
+
+		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   "用户不存在",
+			"error":   "数据库错误",
 		})
 		return
 	}
@@ -37,10 +47,16 @@ func LoginPostHandler(c *gin.Context) {
 	session.Set("user_id", user.ID)
 	session.Set("username", user.Username)
 	session.Set("role", string(user.Role))
-	session.Save()
+	if err := session.Save(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "session 保存失败",
+		})
+		return
+	}
 
 	redirect := "/"
-	if user.Role == "admin" {
+	if user.Role == models.Admin {
 		redirect = "/admin/"
 	}
 
@@ -53,7 +69,13 @@ func LoginPostHandler(c *gin.Context) {
 func LogoutHandler(c *gin.Context) {
 	session := sessions.Default(c)
 	session.Clear()
-	session.Save()
+	if err := session.Save(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "session 保存失败",
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":  true,

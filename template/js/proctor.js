@@ -1,12 +1,43 @@
 document.addEventListener('DOMContentLoaded', () => {
+    function normalizeNode(node) {
+        if (!node || typeof node !== 'object') return node;
+        const normalized = { ...node };
+        if (normalized.id === undefined && normalized.ID !== undefined) normalized.id = normalized.ID;
+        if (normalized.current_user_id === undefined && normalized.CurrentUserID !== undefined) normalized.current_user_id = normalized.CurrentUserID;
+        if (normalized.current_exam_id === undefined && normalized.CurrentExamID !== undefined) normalized.current_exam_id = normalized.CurrentExamID;
+        if (normalized.last_heartbeat_at === undefined && normalized.LastHeartbeatAt !== undefined) normalized.last_heartbeat_at = normalized.LastHeartbeatAt;
+        return normalized;
+    }
+
     const nodeGrid = document.getElementById('nodeGrid');
     const usernameDisplay = document.getElementById('usernameDisplay');
     const loadingOverlay = document.getElementById('loadingOverlay');
 
+    function handleAuthFailure(response) {
+        if (response.status === 401) {
+            window.location.href = '/login';
+            return true;
+        }
+        if (response.status === 403) {
+            alert('当前账号无权执行该操作');
+            return true;
+        }
+        return false;
+    }
+
+    async function parseJsonSafe(response) {
+        try {
+            return await response.json();
+        } catch (e) {
+            return {};
+        }
+    }
+
     async function fetchUserInfo() {
         try {
             const response = await fetch('/api/me');
-            const data = await response.json();
+            if (handleAuthFailure(response)) return;
+            const data = await parseJsonSafe(response);
             if (data.username) {
                 usernameDisplay.innerText = data.username;
             }
@@ -32,13 +63,10 @@ document.addEventListener('DOMContentLoaded', () => {
     async function fetchNodes() {
         try {
             const response = await fetch('/api/proctor/nodes');
-            if (response.status === 401) {
-                window.location.href = '/login';
-                return;
-            }
-            const result = await response.json();
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
             // 确定使用标准返回格式 { success: true, data: [] }
-            const nodes = result.data || [];
+            const nodes = (result.data || []).map(normalizeNode);
             renderNodes(nodes);
         } catch (error) {
             console.error('Failed to fetch nodes:', error);
@@ -63,18 +91,28 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         nodeGrid.innerHTML = nodes.map(node => {
-            const isMyNode = node.is_assigned_to_me;
+            const isOccupied = !!node.current_user_id || !!node.current_exam_id || node.status === 'busy';
+            const isUnavailable = node.status === 'offline' || node.status === 'error';
             const statusClass = `status-${node.status}`;
-            const statusText = {
-                'idle': '空闲',
-                'busy': node.is_assigned_to_me ? '您正在使用' : '正在使用',
-                'offline': '离线',
-                'error': '异常'
-            }[node.status] || node.status;
+            let statusText = isOccupied ? '已占用' : '未占用';
+            if (node.status === 'offline') statusText = '离线';
+            if (node.status === 'error') statusText = '异常';
+            if (node.status === 'busy') statusText = '监考中';
+
+            let actionText = isOccupied ? '继续监考' : '进入监考';
+            let actionIcon = isOccupied ? 'fa-play' : 'fa-right-to-bracket';
+            if (isUnavailable) {
+                actionText = node.status === 'error' ? '节点异常' : '节点离线';
+                actionIcon = 'fa-ban';
+            }
+
+            const buttonAttrs = isUnavailable
+                ? 'disabled aria-disabled="true"'
+                : `onclick="enterNode(${node.id})"`;
 
             return `
-                <div class="node-card ${isMyNode ? 'my-node' : ''}">
-                    ${isMyNode ? '<div class="my-badge">当前使用中</div>' : ''}
+                <div class="node-card ${isOccupied ? 'my-node' : ''}">
+                    ${isOccupied ? '<div class="my-badge">当前占用中</div>' : ''}
                     <div class="node-header">
                         <div class="node-name">${node.name}</div>
                         <div style="display: flex; align-items: center; font-size: 0.8125rem;">
@@ -85,7 +123,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="node-info">
                         <div class="info-item">
                             <i class="fa-solid fa-microchip"></i>
-                            <span>型号: ${node.model}</span>
+                            <span>型号: ${node.nodemodel || '-'}</span>
                         </div>
                         <div class="info-item">
                             <i class="fa-solid fa-network-wired"></i>
@@ -96,10 +134,10 @@ document.addEventListener('DOMContentLoaded', () => {
                             <span>最后心跳: ${formatTime(node.last_heartbeat_at)}</span>
                         </div>
                     </div>
-                    <button class="enter-btn ${isMyNode ? 'resume' : ''}" 
-                            onclick="enterNode(${node.id})">
-                        <i class="fa-solid ${isMyNode ? 'fa-play' : 'fa-right-to-bracket'}"></i>
-                        ${isMyNode ? '恢复连接' : '进入监考'}
+                    <button class="enter-btn ${isOccupied ? 'resume' : ''}" 
+                            ${buttonAttrs}>
+                        <i class="fa-solid ${actionIcon}"></i>
+                        ${actionText}
                     </button>
                 </div>
             `;
@@ -112,7 +150,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`/api/proctor/nodes/${nodeId}/jump`, {
                 method: 'POST'
             });
-            const result = await response.json();
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
             if (result.success && result.jump_url) {
                 // 跳转到具体的监考节点页面
                 window.location.href = result.jump_url;
@@ -130,27 +169,29 @@ document.addEventListener('DOMContentLoaded', () => {
     function formatTime(timeStr) {
         if (!timeStr) return '未知';
         const date = new Date(timeStr);
+        if (Number.isNaN(date.getTime())) return '无效时间';
+        if (date.getUTCFullYear() <= 1971) return '未知';
         return date.toLocaleTimeString();
     }
 
     // --- 修改密码逻辑 ---
     const passwordModal = document.getElementById('passwordModal');
-    
-    window.openPasswordModal = function() {
+
+    window.openPasswordModal = function () {
         passwordModal.style.display = 'flex';
     }
 
-    window.closePasswordModal = function() {
+    window.closePasswordModal = function () {
         passwordModal.style.display = 'none';
         document.getElementById('oldPassword').value = '';
         document.getElementById('newPassword').value = '';
         document.getElementById('confirmPassword').value = '';
     }
 
-    window.submitPasswordChange = async function() {
-        const old_password = document.getElementById('oldPassword').value;
-        const new_password = document.getElementById('newPassword').value;
-        const confirm_password = document.getElementById('confirmPassword').value;
+    window.submitPasswordChange = async function () {
+        const old_password = document.getElementById('oldPassword').value.trim();
+        const new_password = document.getElementById('newPassword').value.trim();
+        const confirm_password = document.getElementById('confirmPassword').value.trim();
 
         if (!old_password || !new_password) {
             alert("请填写完整信息");
@@ -168,7 +209,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ old_password, new_password })
             });
-            const result = await response.json();
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
             if (response.ok && result.success) {
                 alert('密码修改成功，请重新登录');
                 window.location.href = '/login';
@@ -183,6 +225,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial load
     fetchUserInfo();
     fetchNodes();
-    // Refresh every 10 seconds for more responsive updates
-    setInterval(fetchNodes, 10000);
+
+    // 页面重新可见时立即刷新，避免后台标签页恢复后状态滞后。
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            fetchNodes();
+        }
+    });
+
+    // 缩短轮询间隔，降低状态变化感知延迟。
+    setInterval(fetchNodes, 3000);
 });

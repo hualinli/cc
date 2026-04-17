@@ -7,7 +7,9 @@ function switchTab(pageId, navElement) {
 
     // 导航栏样式更新
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    navElement.classList.add('active');
+    if (navElement) {
+        navElement.classList.add('active');
+    }
 
     // 更新标题
     const titles = {
@@ -15,6 +17,7 @@ function switchTab(pageId, navElement) {
         'observation': '集中观测',
         'single-view': '单点观测',
         'history': '数据回溯',
+        'exam-mgmt': '考试管理',
         'user-mgmt': '用户管理',
         'node-mgmt': '节点管理',
         'room-mgmt': '教室管理'
@@ -61,6 +64,10 @@ function switchTab(pageId, navElement) {
         fetchHistory();
     }
 
+    if (pageId === 'exam-mgmt') {
+        fetchExamManagement();
+    }
+
     // 只有在控制台页面才调整图表大小
     if (pageId === 'console') {
         setTimeout(() => {
@@ -71,6 +78,162 @@ function switchTab(pageId, navElement) {
 }
 
 let allHistoryRooms = [];
+const retryScheduleInFlight = new Set();
+
+function formatScheduleStatus(status) {
+    const mapping = {
+        pending: { text: '待分配', color: '#9ca3af' },
+        assigned: { text: '已分配待通知', color: '#06b6d4' },
+        notified: { text: '已通知', color: '#22c55e' },
+        running: { text: '进行中', color: '#10b981' },
+        assign_failed: { text: '分配失败', color: '#ef4444' },
+        notify_failed: { text: '通知失败', color: '#f59e0b' }
+    };
+    return mapping[status] || { text: status || '未知', color: '#9ca3af' };
+}
+
+function getExamMgmtState(exam) {
+    if (exam?.end_time) return 'completed';
+    const status = exam?.schedule_status;
+    if (status === 'running') return 'started';
+    if (status === 'pending') return 'unassigned';
+    if (status === 'assign_failed' || status === 'notify_failed') return 'failed';
+    if (status === 'assigned' || status === 'notified') return 'not_started';
+    return 'not_started';
+}
+
+function formatExamMgmtState(state) {
+    const mapping = {
+        started: { text: '已开始', color: '#10b981' },
+        not_started: { text: '未开始', color: '#06b6d4' },
+        unassigned: { text: '未分配', color: '#9ca3af' },
+        failed: { text: '分配失败', color: '#ef4444' }
+    };
+    return mapping[state] || { text: '未开始', color: '#06b6d4' };
+}
+
+function formatDurationMinutes(seconds) {
+    const sec = Number(seconds || 0);
+    if (sec <= 0) return '-';
+    return Number.isInteger(sec / 60) ? String(sec / 60) : (sec / 60).toFixed(1);
+}
+
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function normalizeEntity(entity) {
+    if (!entity || typeof entity !== 'object') return entity;
+
+    const normalized = { ...entity };
+    if (normalized.id === undefined && normalized.ID !== undefined) normalized.id = normalized.ID;
+    if (normalized.created_at === undefined && normalized.CreatedAt !== undefined) normalized.created_at = normalized.CreatedAt;
+    if (normalized.updated_at === undefined && normalized.UpdatedAt !== undefined) normalized.updated_at = normalized.UpdatedAt;
+    if (normalized.start_time === undefined && normalized.StartTime !== undefined) normalized.start_time = normalized.StartTime;
+    if (normalized.end_time === undefined && normalized.EndTime !== undefined) normalized.end_time = normalized.EndTime;
+    if (normalized.last_heartbeat_at === undefined && normalized.LastHeartbeatAt !== undefined) normalized.last_heartbeat_at = normalized.LastHeartbeatAt;
+    if (normalized.current_user_id === undefined && normalized.CurrentUserID !== undefined) normalized.current_user_id = normalized.CurrentUserID;
+    if (normalized.current_exam_id === undefined && normalized.CurrentExamID !== undefined) normalized.current_exam_id = normalized.CurrentExamID;
+
+    if (!normalized.room && normalized.Room) normalized.room = normalizeEntity(normalized.Room);
+    if (!normalized.node && normalized.Node) normalized.node = normalizeEntity(normalized.Node);
+    if (!normalized.user && normalized.User) normalized.user = normalizeEntity(normalized.User);
+
+    if (normalized.room) normalized.room = normalizeEntity(normalized.room);
+    if (normalized.node) normalized.node = normalizeEntity(normalized.node);
+    if (normalized.user) normalized.user = normalizeEntity(normalized.user);
+
+    return normalized;
+}
+
+function parseValidDate(timeStr) {
+    if (!timeStr) return null;
+    const date = new Date(timeStr);
+    if (Number.isNaN(date.getTime())) return null;
+    if (date.getUTCFullYear() <= 1971) return null;
+    return date;
+}
+
+function formatDateTime(timeStr) {
+    const date = parseValidDate(timeStr);
+    return date ? date.toLocaleString() : '-';
+}
+
+function formatRoomTag(room) {
+    if (!room) return '未知';
+    const building = String(room.building || '').trim();
+    const name = String(room.name || '').trim();
+    if (building && name) return `${building}${name}`;
+    if (name) return name;
+    if (building) return building;
+    return '未知';
+}
+
+function formatExamEndTime(exam) {
+    if (exam?.end_time) {
+        return formatDateTime(exam.end_time);
+    }
+
+    const startDate = parseValidDate(exam?.start_time);
+    const durationSeconds = Number(exam?.duration_seconds || 0);
+    if (!startDate || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+        return '-';
+    }
+
+    return formatDateTime(new Date(startDate.getTime() + durationSeconds * 1000));
+}
+
+function handleAuthFailure(response) {
+    if (!response) return false;
+    if (response.status === 401) {
+        window.location.href = '/login';
+        return true;
+    }
+    if (response.status === 403) {
+        alert('当前账号无权执行该操作');
+        return true;
+    }
+    return false;
+}
+
+async function parseJsonSafe(response) {
+    try {
+        return await response.json();
+    } catch (e) {
+        return {};
+    }
+}
+
+async function requestJSON(url, options = {}) {
+    const response = await fetch(url, options);
+    if (handleAuthFailure(response)) {
+        return { response, result: null, aborted: true };
+    }
+    const result = await parseJsonSafe(response);
+    return { response, result, aborted: false };
+}
+
+function getNextMinuteDate(baseDate = new Date()) {
+    const next = new Date(baseDate);
+    next.setSeconds(0, 0);
+    next.setMinutes(next.getMinutes() + 1);
+    return next;
+}
+
+function toLocalDateTimeInputValue(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
 
 async function fetchHistory() {
     try {
@@ -86,29 +249,39 @@ async function fetchHistory() {
         if (roomId) params.append('room_id', roomId);
         if (subject) params.append('subject', subject);
 
-        const response = await fetch(`/api/exams?${params.toString()}`);
-        const result = await response.json();
-        const exams = result.data || [];
+        const { result, aborted } = await requestJSON(`/api/exams?${params.toString()}`);
+        if (aborted || !result) return;
+        const exams = (result.data || []).map(normalizeEntity).filter(e => !!e.end_time);
 
         const tbody = document.querySelector('#history tbody');
         tbody.innerHTML = '';
-        
+
         if (exams.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">暂无记录</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">暂无已结束考试记录</td></tr>';
             return;
         }
 
-        // 为每个考试获取异常数量
-        for (const e of exams) {
-            const alertResponse = await fetch(`/api/alerts?exam_id=${e.id}`);
-            const alertResult = await alertResponse.json();
-            const anomalyCount = alertResult.data ? alertResult.data.length : 0;
+        // 并发获取异常数量，单条失败不影响整体渲染。
+        const alertResponses = await Promise.allSettled(
+            exams.map(e => requestJSON(`/api/alerts?exam_id=${e.id}`))
+        );
+
+        for (let i = 0; i < exams.length; i++) {
+            const e = exams[i];
+            let anomalyCount = 0;
+
+            const settled = alertResponses[i];
+            if (settled.status === 'fulfilled' && settled.value && !settled.value.aborted) {
+                const alertResult = settled.value.result || {};
+                anomalyCount = alertResult.data ? alertResult.data.length : 0;
+            }
 
             const tr = `
                 <tr>
                     <td>EXP-${e.id}</td>
-                    <td>${new Date(e.start_time).toLocaleString()}</td>
+                    <td>${formatDateTime(e.start_time)}</td>
                     <td>${e.subject || '未知'}</td>
+                    <td>${e.room?.building || '-'}</td>
                     <td>${e.room ? e.room.name : '未知'}</td>
                     <td class="${anomalyCount > 0 ? 'text-danger' : 'text-success'}">${anomalyCount}</td>
                     <td><button onclick="viewExamAnomalies(${e.id})" style="padding: 4px 8px; font-size: 12px;">查看异常</button></td>
@@ -126,12 +299,220 @@ async function fetchHistory() {
     }
 }
 
+async function fetchExamManagement() {
+    try {
+        const subject = document.getElementById('exam-mgmt-subject')?.value || '';
+        const status = document.getElementById('exam-mgmt-status')?.value || '';
+        const date = document.getElementById('exam-mgmt-date')?.value || '';
+
+        const params = new URLSearchParams();
+        if (subject) params.append('subject', subject);
+        if (date) params.append('date', date);
+
+        const req = await requestJSON(`/api/exams?${params.toString()}`);
+        if (req.aborted || !req.result) return;
+        let exams = (req.result.data || []).map(normalizeEntity).filter(e => !e.end_time);
+
+        if (status) {
+            exams = exams.filter(e => getExamMgmtState(e) === status);
+        }
+
+        const tbody = document.getElementById('exam-mgmt-body');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+
+        if (exams.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; color: var(--text-muted);">暂无考试数据</td></tr>';
+            return;
+        }
+
+        exams.forEach(e => {
+            const mgmtState = getExamMgmtState(e);
+            const schedule = formatExamMgmtState(mgmtState);
+            const canRetry = ['unassigned', 'not_started', 'failed'].includes(mgmtState);
+            const canDelete = true;
+            const tr = `
+                <tr>
+                    <td>EXP-${e.id}</td>
+                    <td>${escapeHtml(e.name || '-')}</td>
+                    <td>${escapeHtml(e.subject || '-')}</td>
+                    <td>${escapeHtml(e.room?.building || '-')}</td>
+                    <td>${escapeHtml(e.room?.name || '-')}</td>
+                    <td>${escapeHtml(e.user?.username || '-')}</td>
+                    <td>${formatDateTime(e.start_time)}</td>
+                    <td>${formatDurationMinutes(e.duration_seconds)}</td>
+                    <td>${escapeHtml(e.node?.name || '-')}</td>
+                    <td><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;background:${schedule.color}22;color:${schedule.color};border:1px solid ${schedule.color}55;">${schedule.text}</span></td>
+                    <td title="${escapeHtml(e.schedule_error || '')}" style="max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(e.schedule_error || '-')}</td>
+                    <td>
+                        ${canRetry ? `<button class="btn-table" onclick="retryScheduleExam(${e.id})" style="background: var(--warning-color); color: white; margin-right: 6px;"><i class="fa-solid fa-rotate-right"></i> 重试</button>` : ''}
+                        ${canDelete ? `<button class="btn-table btn-delete" onclick="deleteExam(${e.id})"><i class="fa-solid fa-trash"></i> 删除</button>` : ''}
+                    </td>
+                </tr>
+            `;
+            tbody.innerHTML += tr;
+        });
+    } catch (e) {
+        console.error('Fetch exam management failed', e);
+    }
+}
+
+async function retryScheduleExam(examId) {
+    if (retryScheduleInFlight.has(examId)) {
+        alert('该考试正在重试中，请稍候');
+        return;
+    }
+
+    if (!confirm('确定要重试该考试的分配与开考通知吗？')) return;
+    retryScheduleInFlight.add(examId);
+
+    try {
+        const { response, result, aborted } = await requestJSON(`/api/exams/${examId}/retry-schedule`, { method: 'POST' });
+        if (aborted || !result) return;
+
+        if (response.ok && result.success) {
+            alert('重试调度成功');
+            fetchHistory();
+            fetchExamManagement();
+            fetchExamsForConsole();
+        } else {
+            alert(result.error || '重试调度失败');
+        }
+    } catch (e) {
+        console.error('Retry schedule error', e);
+        alert('网络请求出错');
+    } finally {
+        retryScheduleInFlight.delete(examId);
+    }
+}
+
+async function loadExamFormOptions() {
+    const roomSelect = document.getElementById('modalExamRoom');
+    const userSelect = document.getElementById('modalExamUser');
+    const nodeSelect = document.getElementById('modalExamNode');
+
+    roomSelect.innerHTML = '<option value="">加载中...</option>';
+    userSelect.innerHTML = '<option value="">加载中...</option>';
+    nodeSelect.innerHTML = '<option value="">加载中...</option>';
+
+    try {
+        const [roomsReq, usersReq, nodesReq] = await Promise.all([
+            requestJSON('/api/rooms'),
+            requestJSON('/api/users'),
+            requestJSON('/api/nodes')
+        ]);
+
+        if (roomsReq.aborted || usersReq.aborted || nodesReq.aborted) return;
+
+        const roomsResult = roomsReq.result || {};
+        const usersResult = usersReq.result || {};
+        const nodesResult = nodesReq.result || {};
+
+        const rooms = (roomsResult.data || []).map(normalizeEntity);
+        const users = (usersResult.data || []).map(normalizeEntity);
+        const nodes = (nodesResult.data || []).map(normalizeEntity);
+
+        roomSelect.innerHTML = rooms.length
+            ? rooms.map(r => `<option value="${r.id}">${escapeHtml(r.building)} / ${escapeHtml(r.name)}</option>`).join('')
+            : '<option value="">暂无教室</option>';
+
+        userSelect.innerHTML = users.length
+            ? users.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (${u.role === 'admin' ? '管理员' : '监考员'})</option>`).join('')
+            : '<option value="">暂无用户</option>';
+
+        const availableNodes = nodes.filter(n => n.status === 'idle' && !n.current_user_id);
+        nodeSelect.innerHTML = `<option value="">到点自动分配</option>${availableNodes
+            .map(n => `<option value="${n.id}">${escapeHtml(n.name)} (${escapeHtml(n.address || '-')})</option>`)
+            .join('')}`;
+    } catch (e) {
+        console.error('Load exam form options failed', e);
+        roomSelect.innerHTML = '<option value="">加载失败</option>';
+        userSelect.innerHTML = '<option value="">加载失败</option>';
+        nodeSelect.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+function openExamModal() {
+    const startInput = document.getElementById('modalExamStartTime');
+    const minStart = getNextMinuteDate();
+    const minStartValue = toLocalDateTimeInputValue(minStart);
+
+    document.getElementById('modalExamName').value = '';
+    document.getElementById('modalExamSubject').value = '';
+    startInput.min = minStartValue;
+    startInput.step = 60;
+    startInput.value = minStartValue;
+    document.getElementById('modalExamDurationMinutes').value = '120';
+
+    loadExamFormOptions();
+    document.getElementById('examModal').style.display = 'flex';
+}
+
+function closeExamModal() {
+    document.getElementById('examModal').style.display = 'none';
+}
+
+async function submitExam() {
+    const name = document.getElementById('modalExamName').value.trim();
+    const subject = document.getElementById('modalExamSubject').value.trim();
+    const startTime = document.getElementById('modalExamStartTime').value;
+    const durationMinutes = Number(document.getElementById('modalExamDurationMinutes').value);
+    const roomId = Number(document.getElementById('modalExamRoom').value);
+    const userId = Number(document.getElementById('modalExamUser').value);
+    const nodeVal = document.getElementById('modalExamNode').value;
+
+    if (!subject || !startTime || !durationMinutes || !roomId || !userId) {
+        alert('请填写完整的必填项');
+        return;
+    }
+
+    const selectedStart = new Date(startTime);
+    const minStart = getNextMinuteDate();
+    if (Number.isNaN(selectedStart.getTime()) || selectedStart < minStart) {
+        alert('开始时间最早只能选择当前时刻的下一分钟');
+        return;
+    }
+
+    const payload = {
+        name,
+        subject,
+        room_id: roomId,
+        user_id: userId,
+        start_time: new Date(startTime).toISOString(),
+        duration_seconds: Math.round(durationMinutes * 60)
+    };
+    if (nodeVal) {
+        payload.node_id = Number(nodeVal);
+    }
+
+    try {
+        const { response, result, aborted } = await requestJSON('/api/exams', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (aborted || !result) return;
+
+        if (response.ok && result.success) {
+            alert('考试创建成功');
+            closeExamModal();
+            fetchHistory();
+            fetchExamManagement();
+        } else {
+            alert(result.error || '创建考试失败');
+        }
+    } catch (e) {
+        console.error('Create exam failed', e);
+        alert('网络请求出错');
+    }
+}
+
 // 查看考试的异常记录
 async function viewExamAnomalies(examId) {
     try {
-        const response = await fetch(`/api/alerts?exam_id=${examId}`);
-        const result = await response.json();
-        const alerts = result.data || [];
+        const { result, aborted } = await requestJSON(`/api/alerts?exam_id=${examId}`);
+        if (aborted || !result) return;
+        const alerts = (result.data || []).map(normalizeEntity);
 
         // 检查是否已经存在异常弹窗
         const existingModal = document.getElementById('anomaly-modal');
@@ -179,7 +560,7 @@ async function viewExamAnomalies(examId) {
 
             alertsHTML += `
                 <tr>
-                    <td>${new Date(alert.created_at).toLocaleString()}</td>
+                    <td>${formatDateTime(alert.created_at)}</td>
                     <td>${alert.seat_number}</td>
                     <td>${typeNames[alert.type] || alert.type}</td>
                     <td>${alert.message}</td>
@@ -192,7 +573,7 @@ async function viewExamAnomalies(examId) {
         });
 
         alertsHTML += `</tbody></table></div>`;
-        
+
         const modalContent = `
             <div style="background: #1f2937; padding: 20px; border-radius: 8px; max-width: 900px; width: 90%; color: white;">
                 ${alertsHTML}
@@ -221,12 +602,13 @@ async function deleteExam(examId) {
     if (!confirm('确定要删除这条考试记录吗？相关的异常记录也会被删除。')) return;
 
     try {
-        const response = await fetch(`/api/exams/${examId}`, { method: 'DELETE' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/exams/${examId}`, { method: 'DELETE' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('删除成功');
             fetchHistory();
+            fetchExamManagement();
         } else {
             alert(result.error || '删除失败');
         }
@@ -241,8 +623,8 @@ async function deleteAlert(alertId, examId) {
     if (!confirm('确定要删除这条异常记录吗？')) return;
 
     try {
-        const response = await fetch(`/api/alerts/${alertId}`, { method: 'DELETE' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/alerts/${alertId}`, { method: 'DELETE' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('删除成功');
@@ -262,9 +644,9 @@ async function deleteAlert(alertId, examId) {
 async function populateHistoryFilters() {
     try {
         // 1. 抓取所有教室数据
-        const respRooms = await fetch('/api/rooms');
-        const roomsResult = await respRooms.json();
-        allHistoryRooms = roomsResult.data || [];
+        const { result: roomsResult, aborted } = await requestJSON('/api/rooms');
+        if (aborted || !roomsResult) return;
+        allHistoryRooms = (roomsResult.data || []).map(normalizeEntity);
 
         // 2. 提取并填充楼宇
         const buildings = [...new Set(allHistoryRooms.map(r => r.building))];
@@ -335,26 +717,6 @@ if (chartPieEl) {
     chartPie = echarts.init(chartPieEl);
 }
 
-// 基础数据源 (从后端动态获取)
-let currentRoomsState = [];
-
-async function fetchRooms() {
-    try {
-        const response = await fetch('/rooms');
-        currentRoomsState = await response.json();
-        // 转换字段以匹配原有逻辑
-        currentRoomsState = currentRoomsState.map(r => ({
-            id: r.room_id || r.Name, // 兼容性处理
-            subject: r.subject || '未命名项目',
-            count: r.count || 0,
-            anomalies: r.anomalies || 0
-        }));
-        refreshData();
-    } catch (e) {
-        console.error("获取考场数据失败", e);
-    }
-}
-
 // 柱状图配置
 const optionMain = {
     backgroundColor: 'transparent',
@@ -420,16 +782,16 @@ if (chartPie) chartPie.setOption(optionPie);
 async function refreshData() {
     try {
         // 使用新的统计接口
-        const response = await fetch('/api/exams/stats');
-        const result = await response.json();
-        
+        const { result, aborted } = await requestJSON('/api/exams/stats');
+        if (aborted || !result) return;
+
         if (!result.success) {
             console.error("获取统计数据失败");
             return;
         }
 
         const data = result.data;
-        const exams = data.ongoing_exams || [];
+        const exams = (data.ongoing_exams || []).map(normalizeEntity);
 
         // 1. 更新统计卡片（添加安全检查）
         const statRooms = document.getElementById('stat-rooms');
@@ -443,12 +805,15 @@ async function refreshData() {
         if (statCoeff) statCoeff.innerText = data.anomaly_coeff.toFixed(3);
 
         // 2. 准备图表数据
-        const roomNames = exams.map(e => e.room ? e.room.name : '未知');
+        const roomNames = exams.map(e => {
+            if (!e.room) return '未知';
+            return e.room.building ? `${e.room.building}-${e.room.name}` : e.room.name;
+        });
         const anomalyCounts = exams.map(e => e.anomalies_count || 0);
 
         const pieData = exams.map(e => ({
             value: e.anomalies_count || 0,
-            name: e.room ? e.room.name : '未知'
+            name: e.room ? (e.room.building ? `${e.room.building}-${e.room.name}` : e.room.name) : '未知'
         })).filter(item => item.value > 0);
 
         if (pieData.length === 0) {
@@ -477,27 +842,30 @@ async function refreshData() {
             if (exams.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #9ca3af;">暂无正在进行的考试</td></tr>';
             } else {
-            exams.forEach(e => {
-                const tr = `
+                exams.forEach(e => {
+                    const tr = `
                     <tr>
                         <td>EXP-${e.id}</td>
                         <td>${e.subject || '未知'}</td>
                         <td>${e.room && e.room.building ? e.room.building : '-'}</td>
                         <td>${e.room ? e.room.name : '未知'}</td>
                         <td>${e.node ? e.node.name : '未知'}</td>
-                        <td>${new Date(e.start_time).toLocaleString()}</td>
-                        <td>${e.end_time ? new Date(e.end_time).toLocaleString() : '进行中'}</td>
+                        <td>${formatDateTime(e.start_time)}</td>
+                        <td>${formatExamEndTime(e)}</td>
                         <td>${e.examinee_count || 0}</td>
                         <td><span style="color: ${e.anomalies_count > 0 ? '#ef4444' : '#10b981'}">${e.anomalies_count || 0}</span></td>
                         <td>
-                            <button class="btn-table" onclick="observeExam(${e.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px;">
+                            <button class="btn-table" onclick="observeExam(${e.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px; margin-right: 6px;">
                                 <i class="fa-solid fa-eye"></i> 查看
+                            </button>
+                            <button class="btn-table" onclick="viewExamAnomalies(${e.id})" style="background: var(--warning-color); color: white; font-size: 12px; padding: 4px 8px;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> 异常
                             </button>
                         </td>
                     </tr>
                 `;
-                tbody.innerHTML += tr;
-            });
+                    tbody.innerHTML += tr;
+                });
             }
         }
     } catch (e) {
@@ -512,27 +880,23 @@ function viewExamDetails(examId) {
     // 可以添加额外的过滤逻辑
 }
 
-function endExam(examId) {
+async function endExam(examId) {
     if (!confirm('确定要结束这场考试吗？')) return;
-    
-    fetch(`/api/exams/${examId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ end_time: new Date().toISOString() })
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.success) {
+
+    try {
+        const { response, result, aborted } = await requestJSON(`/api/exams/${examId}/end`, { method: 'POST' });
+        if (aborted || !result) return;
+
+        if (response.ok && result.success) {
             alert('考试已结束');
             refreshData();
         } else {
             alert(result.error || '操作失败');
         }
-    })
-    .catch(e => {
+    } catch (e) {
         console.error('结束考试失败', e);
         alert('网络请求出错');
-    });
+    }
 }
 
 function viewAnomaly(examId) {
@@ -591,17 +955,17 @@ function closeStreamSelectionModal() {
 async function loadOngoingExamsForSelection() {
     const container = document.getElementById('ongoing-exams-list');
     container.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 20px;">正在加载正在进行的考试...</div>';
-    
+
     try {
-        const response = await fetch('/api/exams/stats');
-        const result = await response.json();
-        
+        const { result, aborted } = await requestJSON('/api/exams/stats');
+        if (aborted || !result) return;
+
         if (!result.success) {
             container.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 20px;">加载失败</div>';
             return;
         }
 
-        const exams = result.data.ongoing_exams || [];
+        const exams = (result.data.ongoing_exams || []).map(normalizeEntity);
         if (exams.length === 0) {
             container.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 20px;">当前没有正在进行的考试</div>';
             return;
@@ -612,7 +976,7 @@ async function loadOngoingExamsForSelection() {
                 <div>
                     <div style="font-weight: bold; color: #fff;">${exam.subject}</div>
                     <div style="font-size: 13px; color: #9ca3af; margin-top: 4px;">
-                        <i class="fa-solid fa-school"></i> ${exam.room ? exam.room.name : (exam.Room ? exam.Room.name : '未知')} 
+                        <i class="fa-solid fa-school"></i> ${formatRoomTag(exam.room)} 
                         | <i class="fa-solid fa-server"></i> ${exam.node ? exam.node.name : (exam.Node ? exam.Node.name : '未知')}
                     </div>
                 </div>
@@ -637,9 +1001,9 @@ async function selectStream(examId) {
     if (!currentTargetBox) return;
 
     try {
-        const response = await fetch('/api/exams');
-        const result = await response.json();
-        const exams = result.data || [];
+        const { result, aborted } = await requestJSON('/api/exams');
+        if (aborted || !result) return;
+        const exams = (result.data || []).map(normalizeEntity);
         const exam = exams.find(e => e.id == examId);
 
         if (!exam || !exam.node) {
@@ -653,7 +1017,7 @@ async function selectStream(examId) {
 
         const { index, isSingle } = currentTargetBox;
         let targetElement;
-        
+
         if (isSingle) {
             targetElement = document.querySelector('#single-view .monitor-grid .monitor-screen');
         } else {
@@ -664,12 +1028,12 @@ async function selectStream(examId) {
             targetElement.classList.remove('add-btn');
             // 仍然保留点击事件，方便再次切换
             targetElement.onclick = () => addExam(index, isSingle);
-            
+
             targetElement.innerHTML = `
                 <div style="width: 100%; height: 100%; position: relative; pointer-events: none; background: #000; border-radius: 8px; overflow: hidden;">
                     <img src="${streamUrl}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: auto;">
                     <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); padding: 4px 8px; font-size: 11px; color: white; display: flex; justify-content: space-between; align-items: center; pointer-events: auto;">
-                        <span>${exam.room ? exam.room.name : '未知'} - ${exam.subject}</span>
+                        <span>${formatRoomTag(exam.room)} - ${exam.subject}</span>
                         <i class="fa-solid fa-xmark reset-box" onclick="resetBox(event, ${index}, ${isSingle})" style="cursor: pointer; padding: 2px 5px;"></i>
                     </div>
                 </div>
@@ -685,7 +1049,7 @@ async function selectStream(examId) {
 
 function resetBox(event, index, isSingle) {
     if (event) event.stopPropagation();
-    
+
     let targetElement;
     if (isSingle) {
         targetElement = document.querySelector('#single-view .monitor-grid .monitor-screen');
@@ -744,12 +1108,14 @@ document.addEventListener('fullscreenchange', () => {
 // --- 7. 后台交互与数据初始化 (新增) ---
 // 获取用户信息并更新侧边栏
 async function fetchUserInfo() {
-    // TODO: 后续对接后端真实接口
-    const user = { username: "Admin", role: "管理员" };
-
-    // 侧边栏显示
-    document.getElementById('sidebarUsername').innerText = user.username;
-    document.getElementById('sidebarAvatar').innerText = user.username.charAt(0).toUpperCase();
+    try {
+        const { result, aborted } = await requestJSON('/api/me');
+        if (aborted || !result || !result.username) return;
+        document.getElementById('sidebarUsername').innerText = result.username;
+        document.getElementById('sidebarAvatar').innerText = result.username.charAt(0).toUpperCase();
+    } catch (err) {
+        console.error('Fetch current user info failed', err);
+    }
 }
 
 // 退出登录
@@ -766,10 +1132,10 @@ async function logout() {
 // --- 用户管理逻辑 ---
 async function fetchUsers() {
     try {
-        const response = await fetch('/api/users'); // 匹配 main.go
+        const { response, result, aborted } = await requestJSON('/api/users'); // 匹配 main.go
+        if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取用户列表');
-        const result = await response.json();
-        const users = result.data || []; // 适配后端 {"success": true, "data": [...]}
+        const users = (result.data || []).map(normalizeEntity); // 兼容 id/ID 等字段
 
         const tbody = document.getElementById('user-list-body');
         tbody.innerHTML = '';
@@ -779,7 +1145,7 @@ async function fetchUsers() {
             tr.innerHTML = `
                 <td>${user.username}</td>
                 <td><span class="badge ${user.role === 'admin' ? 'bg-danger' : 'bg-primary'}">${user.role === 'admin' ? '管理员' : '监考员'}</span></td>
-                <td>${new Date(user.created_at).toLocaleString()}</td>
+                <td>${formatDateTime(user.created_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
                         ${user.username !== 'admin' ? `
@@ -899,12 +1265,12 @@ async function changePassword() {
     }
 
     try {
-        const response = await fetch('/api/users/password', {
+        const { response, result, aborted } = await requestJSON('/api/users/password', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ old_password: oldPass, new_password: newPass })
         });
-        const result = await response.json();
+        if (aborted || !result) return;
         if (response.ok && result.success) {
             alert('密码修改成功，请重新登录');
             window.location.href = '/login';
@@ -922,22 +1288,21 @@ fetchRooms(); // 初始获取数据
 fetchExamsForConsole(); // 初始获取考试数据（总控制台）
 setInterval(fetchRooms, 10000); // 10秒同步一次考场数据
 setInterval(fetchNodes, 10000); // 10秒同步一次节点数据
-setInterval(fetchExamsForConsole, 10000); // 10秒同步一次考试数据
 
 // --- 节点管理逻辑 ---
 async function fetchNodes() {
     try {
-        const response = await fetch('/api/nodes');
+        const { response, result, aborted } = await requestJSON('/api/nodes');
+        if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取节点列表');
-        const result = await response.json();
-        const nodes = result.data || [];
+        const nodes = (result.data || []).map(normalizeEntity);
 
         // 获取精确统计数据
-        const statsResp = await fetch('/api/nodes/stats');
-        const statsResult = await statsResp.json();
+        const { result: statsResult, aborted: statsAborted } = await requestJSON('/api/nodes/stats');
+        if (statsAborted || !statsResult) return;
         const stats = statsResult.data || {};
 
-        document.getElementById('node-online-count').innerText = stats.idle_available || 0;
+        document.getElementById('node-online-count').innerText = stats.online || 0;
         document.getElementById('node-using-count').innerText = stats.occupied || 0;
         document.getElementById('node-offline-count').innerText = stats.offline || 0;
         document.getElementById('node-total-count').innerText = stats.total || 0;
@@ -946,10 +1311,11 @@ async function fetchNodes() {
         const tbody = document.getElementById('node-list-body');
         tbody.innerHTML = '';
         nodes.forEach(node => {
+            const isOccupied = !!node.current_user_id || !!node.current_exam_id || node.status === 'busy';
             // 细化状态显示
             let statusClass = 'bg-primary';
             let statusText = '空闲可用';
-            
+
             if (node.status === 'offline') {
                 statusClass = 'bg-danger';
                 statusText = '离线';
@@ -959,7 +1325,7 @@ async function fetchNodes() {
             } else if (node.status === 'busy') {
                 statusClass = 'bg-warning';
                 statusText = '正在监考';
-            } else if (node.current_user_id && node.status === 'idle') {
+            } else if (isOccupied && node.status === 'idle') {
                 statusClass = 'bg-info';
                 statusText = '已占用(未开始)';
             }
@@ -972,13 +1338,13 @@ async function fetchNodes() {
                         ${node.name}
                     </a>
                 </td>
-                <td>${node.model}</td>
+                <td>${node.nodemodel || '-'}</td>
                 <td>${node.address}</td>
                 <td><span class="badge ${statusClass}">${statusText}</span></td>
-                <td>${node.last_heartbeat_at ? new Date(node.last_heartbeat_at).toLocaleString() : '-'}</td>
+                <td>${formatDateTime(node.last_heartbeat_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
-                        ${node.current_user_id ? `
+                        ${isOccupied ? `
                             <button class="btn-table" onclick="releaseNode(${node.id}, '${node.name}')" style="background: var(--warning-color); color: white;">
                                 <i class="fa-solid fa-unlock"></i> 释放
                             </button>
@@ -1009,6 +1375,7 @@ function openNodeModal(mode, nodeData = null) {
     document.getElementById('modalNodeName').value = '';
     document.getElementById('modalNodeModel').value = '';
     document.getElementById('modalNodeAddress').value = '';
+    document.getElementById('tokenRow').style.display = 'none';
 
     if (mode === 'add') {
         title.innerText = '新增节点';
@@ -1020,8 +1387,10 @@ function openNodeModal(mode, nodeData = null) {
         // 填充数据
         document.getElementById('modalNodeId').value = nodeData.id;
         document.getElementById('modalNodeName').value = nodeData.name;
-        document.getElementById('modalNodeModel').value = nodeData.model;
+        document.getElementById('modalNodeModel').value = nodeData.nodemodel || '';
         document.getElementById('modalNodeAddress').value = nodeData.address;
+        document.getElementById('modalNodeToken').value = nodeData.token;
+        document.getElementById('tokenRow').style.display = 'flex';
     }
 
     modal.style.display = 'flex';
@@ -1031,13 +1400,42 @@ function closeNodeModal() {
     document.getElementById('nodeModal').style.display = 'none';
 }
 
+function copyToken() {
+    const tokenInput = document.getElementById('modalNodeToken');
+    const toast = document.getElementById('copyToast');
+
+    tokenInput.select();
+    tokenInput.setSelectionRange(0, 99999);
+
+    navigator.clipboard.writeText(tokenInput.value).then(() => {
+        showCopyToast(toast);
+    }).catch(err => {
+        console.error('无法复制: ', err);
+        try {
+            document.execCommand('copy');
+            showCopyToast(toast);
+        } catch (e) {
+            console.error('复制失败');
+        }
+    });
+}
+
+function showCopyToast(toast) {
+    if (!toast) return;
+    toast.style.display = 'block';
+    // 2秒后由于 CSS 动画会消失，这里简单重置 display
+    setTimeout(() => {
+        toast.style.display = 'none';
+    }, 2000);
+}
+
 async function submitNode() {
     const id = document.getElementById('modalNodeId').value;
     const name = document.getElementById('modalNodeName').value;
     const model = document.getElementById('modalNodeModel').value;
     const address = document.getElementById('modalNodeAddress').value;
 
-    if (!name || !model || !address) {
+    if (!name || !model) {
         alert("请填写完整信息");
         return;
     }
@@ -1046,7 +1444,7 @@ async function submitNode() {
     const url = isEdit ? `/api/nodes/${id}` : '/api/nodes';
     const method = isEdit ? 'PUT' : 'POST';
 
-    const body = { name, model, address };
+    const body = { name, nodemodel: model, address };
 
     try {
         const response = await fetch(url, {
@@ -1073,8 +1471,8 @@ async function deleteNode(id, name) {
     if (!confirm(`确定要删除节点 "${name}" 吗？`)) return;
 
     try {
-        const response = await fetch(`/api/nodes/${id}`, { method: 'DELETE' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/nodes/${id}`, { method: 'DELETE' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('删除成功');
@@ -1090,16 +1488,16 @@ async function deleteNode(id, name) {
 async function fetchExamsForConsole() {
     try {
         // 使用 stats 接口，它通过 busy 节点查询正在进行的考试
-        const response = await fetch('/api/exams/stats');
+        const { response, result, aborted } = await requestJSON('/api/exams/stats');
+        if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取考试统计');
-        const result = await response.json();
 
         if (!result.success) {
             console.error('获取考试统计失败');
             return;
         }
 
-        const exams = result.data.ongoing_exams || [];
+        const exams = (result.data.ongoing_exams || []).map(normalizeEntity);
         const tbody = document.getElementById('exam-list-body');
 
         // 只在控制台页面显示时才更新表格
@@ -1109,8 +1507,8 @@ async function fetchExamsForConsole() {
                 tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #9ca3af;">暂无正在进行的考试</td></tr>';
             } else {
                 exams.forEach(exam => {
-                    const startTime = new Date(exam.start_time).toLocaleString();
-                    const endTime = exam.end_time ? new Date(exam.end_time).toLocaleString() : '进行中';
+                    const startTime = formatDateTime(exam.start_time);
+                    const endTime = formatExamEndTime(exam);
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td>EXP-${exam.id}</td>
@@ -1123,8 +1521,11 @@ async function fetchExamsForConsole() {
                         <td>${exam.examinee_count || 0}</td>
                         <td><span style="color: ${exam.anomalies_count > 0 ? '#ef4444' : '#10b981'}">${exam.anomalies_count || 0}</span></td>
                         <td>
-                            <button class="btn-table" onclick="observeExam(${exam.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px;">
+                            <button class="btn-table" onclick="observeExam(${exam.id})" style="background: var(--accent-color); color: white; font-size: 12px; padding: 4px 8px; margin-right: 6px;">
                                 <i class="fa-solid fa-eye"></i> 查看
+                            </button>
+                            <button class="btn-table" onclick="viewExamAnomalies(${exam.id})" style="background: var(--warning-color); color: white; font-size: 12px; padding: 4px 8px;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> 异常
                             </button>
                         </td>
                     `;
@@ -1142,7 +1543,7 @@ async function observeExam(examId) {
     try {
         // 跳转到单点观测，打开 stream
         switchTab('single-view', document.querySelector('[onclick*="single-view"]'));
-        
+
         // 模拟选择信号源的行为
         currentTargetBox = { index: 0, isSingle: true };
         await selectStream(examId);
@@ -1165,8 +1566,8 @@ async function releaseNode(id, name) {
     if (!confirm(`确定要强制释放节点 "${name}" 吗？`)) return;
 
     try {
-        const response = await fetch(`/api/nodes/${id}/release`, { method: 'POST' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/nodes/${id}/release`, { method: 'POST' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('节点已释放');
@@ -1181,9 +1582,9 @@ async function releaseNode(id, name) {
 
 async function jumpToNode(nodeId) {
     try {
-        const response = await fetch(`/api/nodes/${nodeId}/jump`);
-        const result = await response.json();
-        
+        const { result, aborted } = await requestJSON(`/api/nodes/${nodeId}/jump`);
+        if (aborted || !result) return;
+
         if (result.success && result.jump_url) {
             window.open(result.jump_url, '_blank');
         } else {
@@ -1198,8 +1599,8 @@ async function jumpToNode(nodeId) {
 async function syncRooms() {
     if (!confirm('确定要同步教室信息吗？')) return;
     try {
-        const response = await fetch('/api/sync/rooms', { method: 'POST' });
-        const result = await response.json();
+        const { result, aborted } = await requestJSON('/api/sync/rooms', { method: 'POST' });
+        if (aborted || !result) return;
         if (result.success) {
             alert('教室信息同步指令已发送');
         } else {
@@ -1213,10 +1614,10 @@ async function syncRooms() {
 // --- 教室管理逻辑 ---
 async function fetchRooms() {
     try {
-        const response = await fetch('/api/rooms');
+        const { response, result, aborted } = await requestJSON('/api/rooms');
+        if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取教室列表');
-        const result = await response.json();
-        const rooms = result.data || [];
+        const rooms = (result.data || []).map(normalizeEntity);
 
         // 更新统计面板
         const buildings = [...new Set(rooms.map(r => r.building))];
@@ -1233,7 +1634,7 @@ async function fetchRooms() {
                 <td>${room.name}</td>
                 <td>${room.building}</td>
                 <td style="font-family: monospace; font-size: 11px;">${room.rtsp_url}</td>
-                <td>${room.created_at ? new Date(room.created_at).toLocaleString() : '-'}</td>
+                <td>${formatDateTime(room.created_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
                         <button class="btn-table" onclick="openRoomModal('edit', ${JSON.stringify(room).replace(/"/g, '&quot;')})" style="background: var(--accent-color); color: white;">
@@ -1302,13 +1703,12 @@ async function submitRoom() {
     const body = { name, building, rtsp_url: rtspUrl };
 
     try {
-        const response = await fetch(url, {
+        const { response, result, aborted } = await requestJSON(url, {
             method: method,
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
         });
-
-        const result = await response.json();
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert(isEdit ? '修改成功' : '添加教室成功');
@@ -1326,8 +1726,8 @@ async function deleteRoom(id, name) {
     if (!confirm(`确定要删除教室 "${name}" 吗？`)) return;
 
     try {
-        const response = await fetch(`/api/rooms/${id}`, { method: 'DELETE' });
-        const result = await response.json();
+        const { response, result, aborted } = await requestJSON(`/api/rooms/${id}`, { method: 'DELETE' });
+        if (aborted || !result) return;
 
         if (response.ok && result.success) {
             alert('删除成功');

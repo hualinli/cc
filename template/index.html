@@ -30,6 +30,9 @@
         <div class="nav-item" onclick="switchTab('history', this)">
             <i class="fa-solid fa-clock-rotate-left"></i><span>数据回溯</span>
         </div>
+        <div class="nav-item" onclick="switchTab('exam-mgmt', this)">
+            <i class="fa-solid fa-calendar-check"></i><span>考试管理</span>
+        </div>
         <div class="nav-item" onclick="switchTab('user-mgmt', this)">
             <i class="fa-solid fa-users-gear"></i><span>用户管理</span>
         </div>
@@ -104,7 +107,8 @@
                 <div class="card" id="chart-pie"></div>
             </div>
             <div class="card detail-table-container">
-                <h3 style="margin-bottom: 15px; font-size: 16px; border-left: 4px solid var(--accent-color); padding-left: 10px;">
+                <h3
+                    style="margin-bottom: 15px; font-size: 16px; border-left: 4px solid var(--accent-color); padding-left: 10px;">
                     实时观测 - 正在进行的考试</h3>
                 <table>
                     <thead>
@@ -117,7 +121,7 @@
                             <th>开始时间</th>
                             <th>结束时间</th>
                             <th>考生人数</th>
-                            <th>异常人数</th>
+                            <th>异常次数</th>
                             <th>操作</th>
                         </tr>
                     </thead>
@@ -169,6 +173,7 @@
                             <th>记录ID</th>
                             <th>考试时间</th>
                             <th>考试科目</th>
+                            <th>楼栋</th>
                             <th>教室</th>
                             <th>异常数量</th>
                             <th>查看记录</th>
@@ -176,25 +181,54 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr>
-                            <td>REC-2023001</td>
-                            <td>2023-10-15</td>
-                            <td>高等数学</td>
-                            <td>A-101</td>
-                            <td class="text-danger">2</td>
-                            <td><button style="padding: 4px 8px; font-size: 12px;">查看</button></td>
-                            <td><button class="btn-table btn-delete"><i class="fa-solid fa-trash"></i> 删除</button></td>
-                        </tr>
-                        <tr>
-                            <td>REC-2023002</td>
-                            <td>2023-10-15</td>
-                            <td>高等数学</td>
-                            <td>A-102</td>
-                            <td class="text-success">0</td>
-                            <td><button style="padding: 4px 8px; font-size: 12px;">查看</button></td>
-                            <td><button class="btn-table btn-delete"><i class="fa-solid fa-trash"></i> 删除</button></td>
-                        </tr>
                     </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="exam-mgmt" class="page-section">
+            <div class="card controls-bar filter-group">
+                <div class="input-wrap">
+                    <label>考试科目</label>
+                    <input type="text" id="exam-mgmt-subject" placeholder="模糊搜索科目">
+                </div>
+                <div class="input-wrap">
+                    <label>调度状态</label>
+                    <select id="exam-mgmt-status">
+                        <option value="">全部状态</option>
+                        <option value="started">已开始</option>
+                        <option value="not_started">未开始</option>
+                        <option value="unassigned">未分配</option>
+                        <option value="failed">分配失败</option>
+                    </select>
+                </div>
+                <div class="input-wrap">
+                    <label>开始日期</label>
+                    <input type="date" id="exam-mgmt-date">
+                </div>
+                <button onclick="fetchExamManagement()"><i class="fa-solid fa-magnifying-glass"></i> 查询考试</button>
+                <button onclick="openExamModal()" style="background: var(--success-color);"><i
+                        class="fa-solid fa-plus"></i> 新增考试</button>
+            </div>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>考试ID</th>
+                            <th>考试名称</th>
+                            <th>科目</th>
+                            <th>楼栋</th>
+                            <th>教室</th>
+                            <th>监考员</th>
+                            <th>开始时间</th>
+                            <th>时长(分钟)</th>
+                            <th>节点</th>
+                            <th>调度状态</th>
+                            <th>调度错误</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="exam-mgmt-body"></tbody>
                 </table>
             </div>
         </div>
@@ -250,19 +284,26 @@
             <div class="card" style="margin-bottom: 20px;">
                 <div class="setting-section-title">节点统计</div>
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px;">
-                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(34, 197, 94, 0.1); border-radius: 6px;">
+                    <div
+                        style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(34, 197, 94, 0.1); border-radius: 6px;">
                         <span style="font-size: 12px; color: #888; margin-bottom: 5px;">在线节点</span>
-                        <span style="font-size: 28px; font-weight: bold; color: var(--success-color);" id="node-online-count">0</span>
+                        <span style="font-size: 28px; font-weight: bold; color: var(--success-color);"
+                            id="node-online-count">0</span>
                     </div>
-                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
+                    <div
+                        style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
                         <span style="font-size: 12px; color: #888; margin-bottom: 5px;">使用中节点</span>
-                        <span style="font-size: 28px; font-weight: bold; color: var(--danger-color);" id="node-using-count">0</span>
+                        <span style="font-size: 28px; font-weight: bold; color: var(--danger-color);"
+                            id="node-using-count">0</span>
                     </div>
-                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
+                    <div
+                        style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">
                         <span style="font-size: 12px; color: #888; margin-bottom: 5px;">离线节点</span>
-                        <span style="font-size: 28px; font-weight: bold; color: #ef4444;" id="node-offline-count">0</span>
+                        <span style="font-size: 28px; font-weight: bold; color: #ef4444;"
+                            id="node-offline-count">0</span>
                     </div>
-                    <div style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 6px;">
+                    <div
+                        style="display: flex; flex-direction: column; align-items: center; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 6px;">
                         <span style="font-size: 12px; color: #888; margin-bottom: 5px;">节点总数</span>
                         <span style="font-size: 28px; font-weight: bold;" id="node-total-count">0</span>
                     </div>
@@ -271,8 +312,7 @@
 
             <!-- 节点列表 -->
             <div class="card">
-                <div
-                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                     <div class="setting-section-title" style="margin-bottom: 0;">所有节点</div>
                     <button class="btn-add-user" onclick="openNodeModal('add')">
                         <i class="fa-solid fa-plus"></i> 新增节点
@@ -343,7 +383,7 @@
             </div>
         </div>
 
-        </div>
+    </div>
     </div>
 
     <div class="modal-overlay" id="userModal">
@@ -389,6 +429,40 @@
                 <label>设备地址</label>
                 <input type="text" id="modalNodeAddress" placeholder="请输入设备地址">
             </div>
+            <div class="form-row" id="tokenRow" style="display: none;">
+                <label>Token</label>
+                <div style="flex: 1; position: relative;">
+                    <input type="text" id="modalNodeToken" readonly title="点击复制"
+                        style="background: #1f2937; cursor: pointer; flex: 1; border-color: #4b5563; color: #9ca3af; width: 100%;"
+                        onclick="copyToken()">
+                    <div id="copyToast"
+                        style="display: none; position: absolute; right: 10px; top: -25px; background: #10b981; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; animation: fadeInOut 2s forwards;">
+                        已复制</div>
+                </div>
+            </div>
+            <style>
+                @keyframes fadeInOut {
+                    0% {
+                        opacity: 0;
+                        transform: translateY(5px);
+                    }
+
+                    15% {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+
+                    85% {
+                        opacity: 1;
+                        transform: translateY(0);
+                    }
+
+                    100% {
+                        opacity: 0;
+                        transform: translateY(-5px);
+                    }
+                }
+            </style>
             <div style="display: flex; gap: 10px; margin-top: 20px;">
                 <button style="flex: 1; background: #374151;" onclick="closeNodeModal()">取消</button>
                 <button style="flex: 1;" id="modalNodeSubmitBtn" onclick="submitNode()">确认</button>
@@ -419,6 +493,44 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="examModal">
+        <div class="modal" style="max-width: 560px;">
+            <div class="setting-section-title" id="examModalTitle">新增考试</div>
+            <div class="form-row">
+                <label>考试名称（可选）</label>
+                <input type="text" id="modalExamName" placeholder="留空则自动生成“科目+考试”">
+            </div>
+            <div class="form-row">
+                <label>科目 *</label>
+                <input type="text" id="modalExamSubject" placeholder="请输入考试科目">
+            </div>
+            <div class="form-row">
+                <label>开始时间 *</label>
+                <input type="datetime-local" id="modalExamStartTime" step="60">
+            </div>
+            <div class="form-row">
+                <label>时长（分钟）*</label>
+                <input type="number" id="modalExamDurationMinutes" min="1" placeholder="例如 120">
+            </div>
+            <div class="form-row">
+                <label>教室 *</label>
+                <select id="modalExamRoom"></select>
+            </div>
+            <div class="form-row">
+                <label>监考员 *</label>
+                <select id="modalExamUser"></select>
+            </div>
+            <div class="form-row">
+                <label>节点（可选，不选则到点自动分配）</label>
+                <select id="modalExamNode"></select>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button style="flex: 1; background: #374151;" onclick="closeExamModal()">取消</button>
+                <button style="flex: 1;" onclick="submitExam()">确认创建</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 信号源选择对话框 -->
     <div class="modal-overlay" id="streamSelectionModal">
         <div class="modal" style="max-width: 600px;">
@@ -433,7 +545,7 @@
         </div>
     </div>
 
-    <script src="/js/script.js?v=1.0.2"></script>
+    <script src="/js/script.js?v=1.0.5"></script>
 </body>
 
 </html>
