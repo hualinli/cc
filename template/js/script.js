@@ -291,7 +291,7 @@ async function fetchHistory() {
 
             const tr = `
                 <tr>
-                    <td>EXP-${e.id}</td>
+                    <td>${i + 1}</td>
                     <td>${formatDateTime(e.start_time)}</td>
                     <td>${durationMinutes}</td>
                     <td>${e.subject || '未知'}</td>
@@ -340,14 +340,14 @@ async function fetchExamManagement() {
             return;
         }
 
-        exams.forEach(e => {
+        exams.forEach((e, idx) => {
             const mgmtState = getExamMgmtState(e);
             const schedule = formatExamMgmtState(mgmtState);
             const canRetry = ['unassigned', 'not_started', 'failed'].includes(mgmtState);
             const canDelete = true;
             const tr = `
                 <tr>
-                    <td>EXP-${e.id}</td>
+                    <td>${idx + 1}</td>
                     <td>${escapeHtml(e.name || '-')}</td>
                     <td>${escapeHtml(e.subject || '-')}</td>
                     <td>${escapeHtml(e.room?.building || '-')}</td>
@@ -1153,11 +1153,11 @@ async function fetchUsers() {
 
         const tbody = document.getElementById('user-list-body');
         tbody.innerHTML = '';
-        users.forEach(user => {
+        users.forEach((user, idx) => {
             const tr = document.createElement('tr');
             // 注意：Go 返回的 JSON 字段名通常是大写开头的（Username, Role, ID, CreatedAt）
             tr.innerHTML = `
-                <td>${user.id}</td>
+            <td>${idx + 1}</td>
                 <td>${user.username}</td>
                 <td><span class="badge ${user.role === 'admin' ? 'bg-danger' : 'bg-primary'}">${user.role === 'admin' ? '管理员' : '监考员'}</span></td>
                 <td>${formatDateTime(user.created_at)}</td>
@@ -1343,7 +1343,7 @@ async function fetchNodes() {
         // 渲染表格
         const tbody = document.getElementById('node-list-body');
         tbody.innerHTML = '';
-        nodes.forEach(node => {
+        nodes.forEach((node, idx) => {
             const isOccupied = !!node.current_user_id || !!node.current_exam_id || node.status === 'busy';
             // 细化状态显示
             let statusClass = 'bg-primary';
@@ -1365,7 +1365,7 @@ async function fetchNodes() {
 
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${node.id}</td>
+                <td>${idx + 1}</td>
                 <td>
                     <a href="#" onclick="jumpToNode(${node.id}); return false;" style="color: var(--accent-color); text-decoration: none;">
                         ${node.name}
@@ -1660,10 +1660,10 @@ async function fetchRooms() {
         // 渲染表格
         const tbody = document.getElementById('classroom-list-body');
         tbody.innerHTML = '';
-        rooms.forEach(room => {
+        rooms.forEach((room, idx) => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${room.id}</td>
+            <td>${idx + 1}</td>
                 <td>${room.building}</td>
                 <td>${room.name}</td>
                 <td style="font-family: monospace; font-size: 11px;">${room.rtsp_url}</td>
