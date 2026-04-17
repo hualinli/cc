@@ -189,6 +189,18 @@ function formatExamEndTime(exam) {
     return formatDateTime(new Date(startDate.getTime() + durationSeconds * 1000));
 }
 
+function calculateDurationMinutes(startTime, endTime) {
+    const start = parseValidDate(startTime);
+    const end = parseValidDate(endTime);
+    if (!start || !end) return '-';
+
+    const diffMs = end.getTime() - start.getTime();
+    if (diffMs < 0) return '-';
+
+    const minutes = diffMs / 60000;
+    return Number.isInteger(minutes) ? String(minutes) : minutes.toFixed(1);
+}
+
 function handleAuthFailure(response) {
     if (!response) return false;
     if (response.status === 401) {
@@ -257,7 +269,7 @@ async function fetchHistory() {
         tbody.innerHTML = '';
 
         if (exams.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">暂无已结束考试记录</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted);">暂无已结束考试记录</td></tr>';
             return;
         }
 
@@ -269,6 +281,7 @@ async function fetchHistory() {
         for (let i = 0; i < exams.length; i++) {
             const e = exams[i];
             let anomalyCount = 0;
+            const durationMinutes = calculateDurationMinutes(e.start_time, e.end_time);
 
             const settled = alertResponses[i];
             if (settled.status === 'fulfilled' && settled.value && !settled.value.aborted) {
@@ -280,6 +293,7 @@ async function fetchHistory() {
                 <tr>
                     <td>EXP-${e.id}</td>
                     <td>${formatDateTime(e.start_time)}</td>
+                    <td>${durationMinutes}</td>
                     <td>${e.subject || '未知'}</td>
                     <td>${e.room?.building || '-'}</td>
                     <td>${e.room ? e.room.name : '未知'}</td>
