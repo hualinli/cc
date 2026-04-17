@@ -18,6 +18,14 @@ var validAlertTypes = map[models.AlertType]struct{}{
 	models.AlertTypeLeaveSheet:    {},
 	models.AlertTypeStandUp:       {},
 	models.AlertTypeOther:         {},
+	// 节点模型 class_names 直传兼容。
+	models.AlertType("front"):   {},
+	models.AlertType("head"):    {},
+	models.AlertType("limb"):    {},
+	models.AlertType("normal"):  {},
+	models.AlertType("sleep"):   {},
+	models.AlertType("stand"):   {},
+	models.AlertType("unknown"): {},
 }
 
 func isValidAlertType(alertType models.AlertType) bool {
@@ -214,7 +222,7 @@ func UpdateAlert(c *gin.Context) {
 func DeleteAlert(c *gin.Context) {
 	id := c.Param("id")
 
-	result := models.DB.Delete(&models.Alert{}, id)
+	result := models.DB.Unscoped().Delete(&models.Alert{}, id)
 	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "删除异常记录失败"})
 		return

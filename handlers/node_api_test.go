@@ -510,6 +510,44 @@ func TestReportAlert_InvalidTypeReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestReportAlert_ClassNameTypeAccepted(t *testing.T) {
+	cleanup := setupNodeAPIHandlerTestDB(t)
+	defer cleanup()
+
+	user := seedNodeAPIUser(t)
+	room := seedNodeAPIRoom(t)
+	node := seedNodeAPIModel(t, "node-alert-unknown")
+	nodeID := node.ID
+	exam := models.Exam{
+		Name:           "mapped alert exam",
+		Subject:        "chem",
+		RoomID:         room.ID,
+		NodeID:         &nodeID,
+		UserID:         user.ID,
+		StartTime:      time.Now(),
+		ScheduleStatus: models.ExamScheduleRunning,
+	}
+	if err := models.DB.Create(&exam).Error; err != nil {
+		t.Fatalf("failed to seed exam: %v", err)
+	}
+
+	body := fmt.Sprintf(`{"exam_id":%d,"type":"sleep","seat_number":"A1"}`,
+		exam.ID)
+	w := performNodeAPIJSONRequest(t, http.MethodPost, "/report-alert", body, node.ID, ReportAlert)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var reloaded models.Alert
+	if err := models.DB.Order("id desc").First(&reloaded).Error; err != nil {
+		t.Fatalf("failed to load alert: %v", err)
+	}
+	if reloaded.Type != models.AlertType("sleep") {
+		t.Fatalf("expected alert type sleep, got %s", reloaded.Type)
+	}
+}
+
 func TestNodeHeartbeat_ConcurrentMultiNodeUpdatesStatusAndAddress(t *testing.T) {
 	cleanup := setupNodeAPIHandlerTestDB(t)
 	defer cleanup()
