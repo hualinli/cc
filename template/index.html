@@ -235,47 +235,25 @@
 
 
         <div id="user-mgmt" class="page-section">
-            <div style="display: flex; gap: 20px;">
-                <div class="card" style="flex: 2;">
-                    <div
-                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <div class="setting-section-title" style="margin-bottom: 0;">所有用户</div>
-                        <button class="btn-add-user" onclick="openUserModal('add')">
-                            <i class="fa-solid fa-user-plus"></i> 新增用户
-                        </button>
-                    </div>
-                    <table class="user-table">
-                        <thead>
-                            <tr>
-                                <th>用户名</th>
-                                <th>角色</th>
-                                <th>创建时间</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="user-list-body"></tbody>
-                    </table>
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <div class="setting-section-title" style="margin-bottom: 0;">所有用户</div>
+                    <button class="btn-add-user" onclick="openUserModal('add')">
+                        <i class="fa-solid fa-user-plus"></i> 新增用户
+                    </button>
                 </div>
-                <div class="card" style="flex: 1;">
-                    <div class="setting-section-title">修改个人密码</div>
-                    <div class="form-row">
-                        <label>旧密码</label>
-                        <input type="password" id="oldPassword" placeholder="请输入旧密码">
-                    </div>
-                    <div class="form-row">
-                        <label>新密码</label>
-                        <input type="password" id="newPassword" placeholder="请输入新密码">
-                    </div>
-                    <div class="form-row">
-                        <label>确认新密码</label>
-                        <input type="password" id="confirmPassword" placeholder="请再次输入新密码">
-                    </div>
-                    <div style="margin-top: 20px; text-align: right;">
-                        <button onclick="changePassword()" style="width: 100%;">
-                            <i class="fa-solid fa-key"></i> 确认修改
-                        </button>
-                    </div>
-                </div>
+                <table class="user-table" id="user-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>用户名</th>
+                            <th>角色</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="user-list-body"></tbody>
+                </table>
             </div>
         </div>
 
@@ -336,50 +314,41 @@
         </div>
 
         <div id="room-mgmt" class="page-section">
-            <div style="display: flex; gap: 20px;">
-                <div class="card" style="flex: 2;">
-                    <div
-                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <div class="setting-section-title" style="margin-bottom: 0;">所有教室</div>
-                        <div style="display: flex; gap: 10px;">
-                            <button class="btn-refresh" onclick="syncRooms()">
-                                <i class="fa-solid fa-rotate"></i> 同步教室信息
-                            </button>
-                            <button class="btn-add-user" onclick="openRoomModal('add')">
-                                <i class="fa-solid fa-plus"></i> 新增教室
-                            </button>
-                        </div>
-                    </div>
-                    <table class="user-table" id="room-table">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>教室名称</th>
-                                <th>楼栋</th>
-                                <th>RTSP地址</th>
-                                <th>创建时间</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody id="classroom-list-body"></tbody>
-                    </table>
-                </div>
-                <div class="card" style="flex: 1;">
-                    <div class="setting-section-title">教室统计</div>
-                    <div style="display: flex; flex-direction: column; gap: 15px;">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <div class="setting-section-title" style="margin-bottom: 0;">所有教室</div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
                         <div
-                            style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(6, 182, 212, 0.1); border-radius: 6px;">
-                            <span>教室总数</span>
-                            <span style="font-size: 20px; font-weight: bold; color: var(--accent-color);"
-                                id="room-total-count">0</span>
+                            style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 6px; background: rgba(6, 182, 212, 0.1); color: var(--text-muted); font-size: 12px;">
+                            <span>教室总数:</span>
+                            <span id="room-total-count"
+                                style="font-size: 16px; font-weight: bold; color: var(--accent-color);">0</span>
+                            <span style="opacity: 0.5;">|</span>
+                            <span>楼栋数量:</span>
+                            <span id="room-building-count"
+                                style="font-size: 16px; font-weight: bold; color: var(--text-main);">0</span>
                         </div>
-                        <div
-                            style="display: flex; justify-content: space-between; align-items: center; padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 6px;">
-                            <span>楼栋数量</span>
-                            <span style="font-size: 20px; font-weight: bold;" id="room-building-count">0</span>
-                        </div>
+                        <button class="btn-refresh" onclick="syncRooms()">
+                            <i class="fa-solid fa-rotate"></i> 同步教室信息
+                        </button>
+                        <button class="btn-add-user" onclick="openRoomModal('add')">
+                            <i class="fa-solid fa-plus"></i> 新增教室
+                        </button>
                     </div>
                 </div>
+                <table class="user-table" id="room-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>楼栋</th>
+                            <th>教室名称</th>
+                            <th>RTSP地址</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="classroom-list-body"></tbody>
+                </table>
             </div>
         </div>
 

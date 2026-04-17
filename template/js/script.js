@@ -1143,19 +1143,20 @@ async function fetchUsers() {
             const tr = document.createElement('tr');
             // 注意：Go 返回的 JSON 字段名通常是大写开头的（Username, Role, ID, CreatedAt）
             tr.innerHTML = `
+                <td>${user.id}</td>
                 <td>${user.username}</td>
                 <td><span class="badge ${user.role === 'admin' ? 'bg-danger' : 'bg-primary'}">${user.role === 'admin' ? '管理员' : '监考员'}</span></td>
                 <td>${formatDateTime(user.created_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
+                        <button class="btn-table" onclick="openUserModal('edit', ${JSON.stringify(user).replace(/"/g, '&quot;')})" style="background: var(--accent-color); color: white;">
+                            <i class="fa-solid fa-pen-to-square"></i> 编辑
+                        </button>
                         ${user.username !== 'admin' ? `
-                            <button class="btn-table" onclick="openUserModal('edit', ${JSON.stringify(user).replace(/"/g, '&quot;')})" style="background: var(--accent-color); color: white;">
-                                <i class="fa-solid fa-pen-to-square"></i> 编辑
-                            </button>
                             <button class="btn-table btn-delete" onclick="deleteUser(${user.id}, '${user.username}')">
                                 <i class="fa-solid fa-trash"></i> 删除
                             </button>
-                        ` : '<span style="color: var(--text-muted); font-size: 11px; padding: 5px;">系统账号不可操作</span>'}
+                        ` : ''}
                     </div>
                 </td>
             `;
@@ -1649,8 +1650,8 @@ async function fetchRooms() {
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td>${room.id}</td>
-                <td>${room.name}</td>
                 <td>${room.building}</td>
+                <td>${room.name}</td>
                 <td style="font-family: monospace; font-size: 11px;">${room.rtsp_url}</td>
                 <td>${formatDateTime(room.created_at)}</td>
                 <td>

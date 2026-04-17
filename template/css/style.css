@@ -442,6 +442,22 @@
             gap: 5px;
         }
 
+        /* 管理页表格：操作列统一居中（用户/节点/教室） */
+        #user-table th:last-child,
+        #user-table td:last-child,
+        #node-table th:last-child,
+        #node-table td:last-child,
+        #room-table th:last-child,
+        #room-table td:last-child {
+            text-align: center;
+        }
+
+        #user-table td:last-child>div,
+        #node-table td:last-child>div,
+        #room-table td:last-child>div {
+            justify-content: center;
+        }
+
         .btn-view-anomaly {
             background: rgba(239, 68, 68, 0.2);
             color: #fca5a5;
@@ -817,12 +833,10 @@
             font-size: 13px;
         }
 
-        /* 解决用户管理分栏布局宽度问题 */
+        /* 用户管理单栏布局（与节点管理保持一致） */
         #user-mgmt>div {
-            display: flex;
+            display: block;
             width: 100%;
-            gap: 20px;
-            flex-grow: 1;
         }
 
         #user-mgmt .card {
