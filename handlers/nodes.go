@@ -73,7 +73,7 @@ func CreateNode(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    node,
+		"data":    toNodePayload(node),
 	})
 }
 
@@ -252,7 +252,7 @@ func GetNode(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    node,
+		"data":    toNodePayload(node),
 	})
 }
 
@@ -297,7 +297,13 @@ func ListNodes(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    nodes,
+		"data": func() []nodePayload {
+			result := make([]nodePayload, 0, len(nodes))
+			for _, n := range nodes {
+				result = append(result, toNodePayload(n))
+			}
+			return result
+		}(),
 	})
 }
 

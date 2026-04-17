@@ -1,4 +1,13 @@
 document.addEventListener('DOMContentLoaded', () => {
+    function normalizeNode(node) {
+        if (!node || typeof node !== 'object') return node;
+        const normalized = { ...node };
+        if (normalized.id === undefined && normalized.ID !== undefined) normalized.id = normalized.ID;
+        if (normalized.current_user_id === undefined && normalized.CurrentUserID !== undefined) normalized.current_user_id = normalized.CurrentUserID;
+        if (normalized.last_heartbeat_at === undefined && normalized.LastHeartbeatAt !== undefined) normalized.last_heartbeat_at = normalized.LastHeartbeatAt;
+        return normalized;
+    }
+
     const nodeGrid = document.getElementById('nodeGrid');
     const usernameDisplay = document.getElementById('usernameDisplay');
     const loadingOverlay = document.getElementById('loadingOverlay');
@@ -56,7 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (handleAuthFailure(response)) return;
             const result = await parseJsonSafe(response);
             // 确定使用标准返回格式 { success: true, data: [] }
-            const nodes = result.data || [];
+            const nodes = (result.data || []).map(normalizeNode);
             renderNodes(nodes);
         } catch (error) {
             console.error('Failed to fetch nodes:', error);
@@ -147,6 +156,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!timeStr) return '未知';
         const date = new Date(timeStr);
         if (Number.isNaN(date.getTime())) return '无效时间';
+        if (date.getUTCFullYear() <= 1971) return '未知';
         return date.toLocaleTimeString();
     }
 

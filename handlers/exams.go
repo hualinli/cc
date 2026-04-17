@@ -136,7 +136,7 @@ func CreateExam(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": exam})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": toExamPayload(exam)})
 }
 
 func DeleteExam(c *gin.Context) {
@@ -298,7 +298,7 @@ func UpdateExam(c *gin.Context) {
 
 	// 重新加载关联数据
 	models.DB.Preload("Room").Preload("Node").Preload("User").First(&exam, uint(idUint))
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": exam})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": toExamPayload(exam)})
 }
 
 func GetExams(c *gin.Context) {
@@ -333,10 +333,26 @@ func GetExams(c *gin.Context) {
 		Remark          string       `json:"remark,omitempty"`
 		CreatedAt       time.Time    `json:"created_at"`
 		UpdatedAt       time.Time    `json:"updated_at"`
-		Room            *models.Room `json:"room,omitempty"`
-		Node            *models.Node `json:"node,omitempty"`
-		User            *models.User `json:"user,omitempty"`
+		Room            *roomPayload `json:"room,omitempty"`
+		Node            *nodePayload `json:"node,omitempty"`
+		User            *userPayload `json:"user,omitempty"`
 		AnomaliesCount  int64        `json:"anomalies_count"`
+	}
+
+	var roomData *roomPayload
+	if exam.Room != nil {
+		r := toRoomPayload(*exam.Room)
+		roomData = &r
+	}
+	var nodeData *nodePayload
+	if exam.Node != nil {
+		n := toNodePayload(*exam.Node)
+		nodeData = &n
+	}
+	var userData *userPayload
+	if exam.User != nil {
+		u := toUserPayload(*exam.User)
+		userData = &u
 	}
 
 	response := ExamResponse{
@@ -355,9 +371,9 @@ func GetExams(c *gin.Context) {
 		Remark:          exam.Remark,
 		CreatedAt:       exam.CreatedAt,
 		UpdatedAt:       exam.UpdatedAt,
-		Room:            exam.Room,
-		Node:            exam.Node,
-		User:            exam.User,
+		Room:            roomData,
+		Node:            nodeData,
+		User:            userData,
 		AnomaliesCount:  anomaliesCount,
 	}
 
@@ -406,7 +422,12 @@ func ListExams(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": exams})
+	result := make([]examPayload, 0, len(exams))
+	for _, exam := range exams {
+		result = append(result, toExamPayload(exam))
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
 }
 
 func GetExamStats(c *gin.Context) {
@@ -509,7 +530,7 @@ func RetryAssignAndNotifyExam(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": exam})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": toExamPayload(exam)})
 }
 
 // EndExam 管理员手动结束考试

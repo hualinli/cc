@@ -58,7 +58,7 @@ func CreateRoom(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    room,
+		"data":    toRoomPayload(room),
 	})
 }
 
@@ -192,7 +192,7 @@ func GetRoom(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    room,
+		"data":    toRoomPayload(room),
 	})
 }
 
@@ -217,7 +217,13 @@ func ListRooms(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    rooms,
+		"data": func() []roomPayload {
+			result := make([]roomPayload, 0, len(rooms))
+			for _, r := range rooms {
+				result = append(result, toRoomPayload(r))
+			}
+			return result
+		}(),
 	})
 }
 

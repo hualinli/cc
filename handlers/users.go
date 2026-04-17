@@ -86,7 +86,7 @@ func CreateUser(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    user,
+		"data":    toUserPayload(user),
 	})
 }
 
@@ -110,7 +110,7 @@ func GetUser(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    user,
+		"data":    toUserPayload(user),
 	})
 }
 
@@ -127,7 +127,13 @@ func ListUsers(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    users,
+		"data": func() []userPayload {
+			result := make([]userPayload, 0, len(users))
+			for _, u := range users {
+				result = append(result, toUserPayload(u))
+			}
+			return result
+		}(),
 	})
 }
 

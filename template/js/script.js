@@ -128,6 +128,43 @@ function escapeHtml(text) {
         .replace(/'/g, '&#039;');
 }
 
+function normalizeEntity(entity) {
+    if (!entity || typeof entity !== 'object') return entity;
+
+    const normalized = { ...entity };
+    if (normalized.id === undefined && normalized.ID !== undefined) normalized.id = normalized.ID;
+    if (normalized.created_at === undefined && normalized.CreatedAt !== undefined) normalized.created_at = normalized.CreatedAt;
+    if (normalized.updated_at === undefined && normalized.UpdatedAt !== undefined) normalized.updated_at = normalized.UpdatedAt;
+    if (normalized.start_time === undefined && normalized.StartTime !== undefined) normalized.start_time = normalized.StartTime;
+    if (normalized.end_time === undefined && normalized.EndTime !== undefined) normalized.end_time = normalized.EndTime;
+    if (normalized.last_heartbeat_at === undefined && normalized.LastHeartbeatAt !== undefined) normalized.last_heartbeat_at = normalized.LastHeartbeatAt;
+    if (normalized.current_user_id === undefined && normalized.CurrentUserID !== undefined) normalized.current_user_id = normalized.CurrentUserID;
+    if (normalized.current_exam_id === undefined && normalized.CurrentExamID !== undefined) normalized.current_exam_id = normalized.CurrentExamID;
+
+    if (!normalized.room && normalized.Room) normalized.room = normalizeEntity(normalized.Room);
+    if (!normalized.node && normalized.Node) normalized.node = normalizeEntity(normalized.Node);
+    if (!normalized.user && normalized.User) normalized.user = normalizeEntity(normalized.User);
+
+    if (normalized.room) normalized.room = normalizeEntity(normalized.room);
+    if (normalized.node) normalized.node = normalizeEntity(normalized.node);
+    if (normalized.user) normalized.user = normalizeEntity(normalized.user);
+
+    return normalized;
+}
+
+function parseValidDate(timeStr) {
+    if (!timeStr) return null;
+    const date = new Date(timeStr);
+    if (Number.isNaN(date.getTime())) return null;
+    if (date.getUTCFullYear() <= 1971) return null;
+    return date;
+}
+
+function formatDateTime(timeStr) {
+    const date = parseValidDate(timeStr);
+    return date ? date.toLocaleString() : '-';
+}
+
 function handleAuthFailure(response) {
     if (!response) return false;
     if (response.status === 401) {
@@ -190,7 +227,7 @@ async function fetchHistory() {
 
         const { result, aborted } = await requestJSON(`/api/exams?${params.toString()}`);
         if (aborted || !result) return;
-        const exams = (result.data || []).filter(e => !!e.end_time);
+        const exams = (result.data || []).map(normalizeEntity).filter(e => !!e.end_time);
 
         const tbody = document.querySelector('#history tbody');
         tbody.innerHTML = '';
@@ -218,7 +255,7 @@ async function fetchHistory() {
             const tr = `
                 <tr>
                     <td>EXP-${e.id}</td>
-                    <td>${new Date(e.start_time).toLocaleString()}</td>
+                    <td>${formatDateTime(e.start_time)}</td>
                     <td>${e.subject || '未知'}</td>
                     <td>${e.room ? e.room.name : '未知'}</td>
                     <td class="${anomalyCount > 0 ? 'text-danger' : 'text-success'}">${anomalyCount}</td>
@@ -249,7 +286,7 @@ async function fetchExamManagement() {
 
         const req = await requestJSON(`/api/exams?${params.toString()}`);
         if (req.aborted || !req.result) return;
-        let exams = (req.result.data || []).filter(e => !e.end_time);
+        let exams = (req.result.data || []).map(normalizeEntity).filter(e => !e.end_time);
 
         if (status) {
             exams = exams.filter(e => getExamMgmtState(e) === status);
@@ -276,7 +313,7 @@ async function fetchExamManagement() {
                     <td>${escapeHtml(e.subject || '-')}</td>
                     <td>${escapeHtml(e.room?.name || '-')}</td>
                     <td>${escapeHtml(e.user?.username || '-')}</td>
-                    <td>${e.start_time ? new Date(e.start_time).toLocaleString() : '-'}</td>
+                    <td>${formatDateTime(e.start_time)}</td>
                     <td>${formatDurationMinutes(e.duration_seconds)}</td>
                     <td>${escapeHtml(e.node?.name || '-')}</td>
                     <td><span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:12px;background:${schedule.color}22;color:${schedule.color};border:1px solid ${schedule.color}55;">${schedule.text}</span></td>
@@ -345,9 +382,9 @@ async function loadExamFormOptions() {
         const usersResult = usersReq.result || {};
         const nodesResult = nodesReq.result || {};
 
-        const rooms = roomsResult.data || [];
-        const users = usersResult.data || [];
-        const nodes = nodesResult.data || [];
+        const rooms = (roomsResult.data || []).map(normalizeEntity);
+        const users = (usersResult.data || []).map(normalizeEntity);
+        const nodes = (nodesResult.data || []).map(normalizeEntity);
 
         roomSelect.innerHTML = rooms.length
             ? rooms.map(r => `<option value="${r.id}">${escapeHtml(r.building)} / ${escapeHtml(r.name)}</option>`).join('')
@@ -449,7 +486,7 @@ async function viewExamAnomalies(examId) {
     try {
         const { result, aborted } = await requestJSON(`/api/alerts?exam_id=${examId}`);
         if (aborted || !result) return;
-        const alerts = result.data || [];
+        const alerts = (result.data || []).map(normalizeEntity);
 
         // 检查是否已经存在异常弹窗
         const existingModal = document.getElementById('anomaly-modal');
@@ -497,7 +534,7 @@ async function viewExamAnomalies(examId) {
 
             alertsHTML += `
                 <tr>
-                    <td>${new Date(alert.created_at).toLocaleString()}</td>
+                    <td>${formatDateTime(alert.created_at)}</td>
                     <td>${alert.seat_number}</td>
                     <td>${typeNames[alert.type] || alert.type}</td>
                     <td>${alert.message}</td>
@@ -583,7 +620,7 @@ async function populateHistoryFilters() {
         // 1. 抓取所有教室数据
         const { result: roomsResult, aborted } = await requestJSON('/api/rooms');
         if (aborted || !roomsResult) return;
-        allHistoryRooms = roomsResult.data || [];
+        allHistoryRooms = (roomsResult.data || []).map(normalizeEntity);
 
         // 2. 提取并填充楼宇
         const buildings = [...new Set(allHistoryRooms.map(r => r.building))];
@@ -728,7 +765,7 @@ async function refreshData() {
         }
 
         const data = result.data;
-        const exams = data.ongoing_exams || [];
+        const exams = (data.ongoing_exams || []).map(normalizeEntity);
 
         // 1. 更新统计卡片（添加安全检查）
         const statRooms = document.getElementById('stat-rooms');
@@ -787,8 +824,8 @@ async function refreshData() {
                         <td>${e.room && e.room.building ? e.room.building : '-'}</td>
                         <td>${e.room ? e.room.name : '未知'}</td>
                         <td>${e.node ? e.node.name : '未知'}</td>
-                        <td>${new Date(e.start_time).toLocaleString()}</td>
-                        <td>${e.end_time ? new Date(e.end_time).toLocaleString() : '进行中'}</td>
+                        <td>${formatDateTime(e.start_time)}</td>
+                        <td>${e.end_time ? formatDateTime(e.end_time) : '进行中'}</td>
                         <td>${e.examinee_count || 0}</td>
                         <td><span style="color: ${e.anomalies_count > 0 ? '#ef4444' : '#10b981'}">${e.anomalies_count || 0}</span></td>
                         <td>
@@ -902,7 +939,7 @@ async function loadOngoingExamsForSelection() {
             return;
         }
 
-        const exams = result.data.ongoing_exams || [];
+        const exams = (result.data.ongoing_exams || []).map(normalizeEntity);
         if (exams.length === 0) {
             container.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 20px;">当前没有正在进行的考试</div>';
             return;
@@ -940,7 +977,7 @@ async function selectStream(examId) {
     try {
         const { result, aborted } = await requestJSON('/api/exams');
         if (aborted || !result) return;
-        const exams = result.data || [];
+        const exams = (result.data || []).map(normalizeEntity);
         const exam = exams.find(e => e.id == examId);
 
         if (!exam || !exam.node) {
@@ -1072,7 +1109,7 @@ async function fetchUsers() {
         const { response, result, aborted } = await requestJSON('/api/users'); // 匹配 main.go
         if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取用户列表');
-        const users = result.data || []; // 适配后端 {"success": true, "data": [...]}
+        const users = (result.data || []).map(normalizeEntity); // 兼容 id/ID 等字段
 
         const tbody = document.getElementById('user-list-body');
         tbody.innerHTML = '';
@@ -1082,7 +1119,7 @@ async function fetchUsers() {
             tr.innerHTML = `
                 <td>${user.username}</td>
                 <td><span class="badge ${user.role === 'admin' ? 'bg-danger' : 'bg-primary'}">${user.role === 'admin' ? '管理员' : '监考员'}</span></td>
-                <td>${new Date(user.created_at).toLocaleString()}</td>
+                <td>${formatDateTime(user.created_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
                         ${user.username !== 'admin' ? `
@@ -1232,7 +1269,7 @@ async function fetchNodes() {
         const { response, result, aborted } = await requestJSON('/api/nodes');
         if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取节点列表');
-        const nodes = result.data || [];
+        const nodes = (result.data || []).map(normalizeEntity);
 
         // 获取精确统计数据
         const { result: statsResult, aborted: statsAborted } = await requestJSON('/api/nodes/stats');
@@ -1278,7 +1315,7 @@ async function fetchNodes() {
                 <td>${node.nodemodel || '-'}</td>
                 <td>${node.address}</td>
                 <td><span class="badge ${statusClass}">${statusText}</span></td>
-                <td>${node.last_heartbeat_at ? new Date(node.last_heartbeat_at).toLocaleString() : '-'}</td>
+                <td>${formatDateTime(node.last_heartbeat_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
                         ${isOccupied ? `
@@ -1434,7 +1471,7 @@ async function fetchExamsForConsole() {
             return;
         }
 
-        const exams = result.data.ongoing_exams || [];
+        const exams = (result.data.ongoing_exams || []).map(normalizeEntity);
         const tbody = document.getElementById('exam-list-body');
 
         // 只在控制台页面显示时才更新表格
@@ -1444,8 +1481,8 @@ async function fetchExamsForConsole() {
                 tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #9ca3af;">暂无正在进行的考试</td></tr>';
             } else {
                 exams.forEach(exam => {
-                    const startTime = new Date(exam.start_time).toLocaleString();
-                    const endTime = exam.end_time ? new Date(exam.end_time).toLocaleString() : '进行中';
+                    const startTime = formatDateTime(exam.start_time);
+                    const endTime = exam.end_time ? formatDateTime(exam.end_time) : '进行中';
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td>EXP-${exam.id}</td>
@@ -1554,7 +1591,7 @@ async function fetchRooms() {
         const { response, result, aborted } = await requestJSON('/api/rooms');
         if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取教室列表');
-        const rooms = result.data || [];
+        const rooms = (result.data || []).map(normalizeEntity);
 
         // 更新统计面板
         const buildings = [...new Set(rooms.map(r => r.building))];
@@ -1571,7 +1608,7 @@ async function fetchRooms() {
                 <td>${room.name}</td>
                 <td>${room.building}</td>
                 <td style="font-family: monospace; font-size: 11px;">${room.rtsp_url}</td>
-                <td>${room.created_at ? new Date(room.created_at).toLocaleString() : '-'}</td>
+                <td>${formatDateTime(room.created_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
                         <button class="btn-table" onclick="openRoomModal('edit', ${JSON.stringify(room).replace(/"/g, '&quot;')})" style="background: var(--accent-color); color: white;">
