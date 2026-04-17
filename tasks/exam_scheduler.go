@@ -183,6 +183,11 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 		case errors.Is(txErr, errInvalidDuration):
 			statusUpdates["schedule_status"] = models.ExamScheduleNotifyFail
 			statusUpdates["schedule_error"] = txErr.Error()
+			statusUpdates["node_id"] = nil
+		case strings.Contains(strings.ToLower(txErr.Error()), "unique constraint failed: exams.node_id"):
+			statusUpdates["schedule_status"] = models.ExamScheduleAssignFail
+			statusUpdates["schedule_error"] = txErr.Error()
+			statusUpdates["node_id"] = nil
 		}
 		if len(statusUpdates) > 0 {
 			if dbErr := models.DB.Model(&models.Exam{}).Where("id = ?", examID).Updates(statusUpdates).Error; dbErr != nil {
@@ -200,6 +205,7 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 		rollbackUpdates := map[string]any{
 			"schedule_status": models.ExamScheduleNotifyFail,
 			"schedule_error":  err.Error(),
+			"node_id":         nil,
 		}
 		if dbErr := models.DB.Model(&models.Exam{}).Where("id = ?", exam.ID).Updates(rollbackUpdates).Error; dbErr != nil {
 			log.Printf("[ExamScheduler] update notify failure status failed exam=%d: %v", exam.ID, dbErr)

@@ -422,6 +422,105 @@ func TestListExams_InvalidDate(t *testing.T) {
 	}
 }
 
+func TestListExams_IncludesFailedByDefault(t *testing.T) {
+	cleanup := setupExamsHandlerTestDB(t)
+	defer cleanup()
+
+	room := seedExamRoom(t)
+	user := seedExamUser(t)
+	failedExam := models.Exam{
+		Name:           "notify-failed",
+		Subject:        "math",
+		RoomID:         room.ID,
+		UserID:         user.ID,
+		StartTime:      time.Now(),
+		ScheduleStatus: models.ExamScheduleNotifyFail,
+		ScheduleError:  "node notify failed",
+	}
+	if err := models.DB.Create(&failedExam).Error; err != nil {
+		t.Fatalf("failed to seed failed exam: %v", err)
+	}
+
+	r := setupExamsRouter()
+	w := performExamJSONRequest(t, r, http.MethodGet, "/exams", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	resp := decodeExamResp(t, w)
+	if resp["success"] != true {
+		t.Fatalf("expected success true, got %v", resp["success"])
+	}
+	data, ok := resp["data"].([]any)
+	if !ok {
+		t.Fatalf("expected data array, got %T", resp["data"])
+	}
+	if len(data) != 1 {
+		t.Fatalf("expected 1 exam, got %d", len(data))
+	}
+	examData, ok := data[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected exam object, got %T", data[0])
+	}
+	if examData["schedule_status"] != models.ExamScheduleNotifyFail {
+		t.Fatalf("expected notify_failed status, got %v", examData["schedule_status"])
+	}
+}
+
+func TestListExams_ExcludeFailedQuery(t *testing.T) {
+	cleanup := setupExamsHandlerTestDB(t)
+	defer cleanup()
+
+	room := seedExamRoom(t)
+	user := seedExamUser(t)
+
+	pendingExam := models.Exam{
+		Name:           "pending",
+		Subject:        "physics",
+		RoomID:         room.ID,
+		UserID:         user.ID,
+		StartTime:      time.Now(),
+		ScheduleStatus: models.ExamSchedulePending,
+	}
+	failedExam := models.Exam{
+		Name:           "assign-failed",
+		Subject:        "math",
+		RoomID:         room.ID,
+		UserID:         user.ID,
+		StartTime:      time.Now(),
+		ScheduleStatus: models.ExamScheduleAssignFail,
+		ScheduleError:  "no available node",
+	}
+	if err := models.DB.Create(&pendingExam).Error; err != nil {
+		t.Fatalf("failed to seed pending exam: %v", err)
+	}
+	if err := models.DB.Create(&failedExam).Error; err != nil {
+		t.Fatalf("failed to seed failed exam: %v", err)
+	}
+
+	r := setupExamsRouter()
+	w := performExamJSONRequest(t, r, http.MethodGet, "/exams?exclude_failed=true", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+
+	resp := decodeExamResp(t, w)
+	data, ok := resp["data"].([]any)
+	if !ok {
+		t.Fatalf("expected data array, got %T", resp["data"])
+	}
+	if len(data) != 1 {
+		t.Fatalf("expected 1 exam after exclude_failed, got %d", len(data))
+	}
+	examData, ok := data[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected exam object, got %T", data[0])
+	}
+	if examData["schedule_status"] != models.ExamSchedulePending {
+		t.Fatalf("expected pending status, got %v", examData["schedule_status"])
+	}
+}
+
 func TestGetExamStats_Empty(t *testing.T) {
 	cleanup := setupExamsHandlerTestDB(t)
 	defer cleanup()

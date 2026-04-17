@@ -409,3 +409,85 @@ func TestScheduleExamByID_DoesNotSetRunningIfExamEndedDuringNotify(t *testing.T)
 		t.Fatalf("expected node lock to be released by end-exam flow, got node=%s", string(encoded))
 	}
 }
+
+func TestScheduleExamByID_NotifyFailureClearsExamNodeBinding(t *testing.T) {
+	db := setupExamSchedulerProcessTestDB(t)
+	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+
+	nodeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/exam/start" && r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"success": false, "error": "Classroom with id 2 not found"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success": false, "error": "not found"}`))
+	}))
+	defer nodeServer.Close()
+
+	user := models.User{Username: "notify-fail-user", Password: "password", Role: "proctor"}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("create user failed: %v", err)
+	}
+
+	room := models.Room{Name: "R501", Building: "C", RTSPUrl: "rtsp://test"}
+	if err := db.Create(&room).Error; err != nil {
+		t.Fatalf("create room failed: %v", err)
+	}
+
+	node := models.Node{
+		Name:            "notify-fail-node",
+		Token:           "notify-fail-token",
+		NodeModel:       "m3",
+		Address:         strings.TrimPrefix(nodeServer.URL, "http://"),
+		Status:          models.NodeStatusIdle,
+		Version:         "1.0.0",
+		LastHeartbeatAt: time.Now(),
+	}
+	if err := db.Create(&node).Error; err != nil {
+		t.Fatalf("create node failed: %v", err)
+	}
+
+	exam := models.Exam{
+		Name:            "Exam-Notify-Fail",
+		Subject:         "Biology",
+		RoomID:          room.ID,
+		UserID:          user.ID,
+		StartTime:       time.Now().Add(-1 * time.Minute),
+		DurationSeconds: 1800,
+		ScheduleStatus:  models.ExamSchedulePending,
+	}
+	if err := db.Create(&exam).Error; err != nil {
+		t.Fatalf("create exam failed: %v", err)
+	}
+
+	err := scheduleExamByID(exam.ID, false)
+	if err == nil {
+		t.Fatalf("expected schedule error on notify failure, got nil")
+	}
+
+	var reloadedExam models.Exam
+	if err := db.First(&reloadedExam, exam.ID).Error; err != nil {
+		t.Fatalf("reload exam failed: %v", err)
+	}
+	if reloadedExam.ScheduleStatus != models.ExamScheduleNotifyFail {
+		t.Fatalf("expected notify_failed, got %s", reloadedExam.ScheduleStatus)
+	}
+	if reloadedExam.NodeID != nil {
+		t.Fatalf("expected node_id cleared on notify failure, got %v", *reloadedExam.NodeID)
+	}
+	if !strings.Contains(strings.ToLower(reloadedExam.ScheduleError), "classroom") {
+		t.Fatalf("expected schedule_error to contain notify reason, got %q", reloadedExam.ScheduleError)
+	}
+
+	var reloadedNode models.Node
+	if err := db.First(&reloadedNode, node.ID).Error; err != nil {
+		t.Fatalf("reload node failed: %v", err)
+	}
+	if reloadedNode.CurrentExamID != nil {
+		t.Fatalf("expected node current_exam_id cleared, got %v", *reloadedNode.CurrentExamID)
+	}
+	if reloadedNode.Status != models.NodeStatusIdle {
+		t.Fatalf("expected node idle after rollback, got %s", reloadedNode.Status)
+	}
+}

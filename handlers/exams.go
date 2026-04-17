@@ -382,8 +382,14 @@ func GetExams(c *gin.Context) {
 
 func ListExams(c *gin.Context) {
 	var exams []models.Exam
-	query := models.DB.Preload("Room").Preload("Node").Preload("User").
-		Where("exams.schedule_status NOT IN ?", []string{models.ExamScheduleAssignFail, models.ExamScheduleNotifyFail})
+	query := models.DB.Preload("Room").Preload("Node").Preload("User")
+
+	// 失败记录默认可见，便于在考试管理与数据回溯定位问题。
+	// 仅在显式传 exclude_failed=true/1 时过滤失败状态。
+	excludeFailed := strings.ToLower(strings.TrimSpace(c.Query("exclude_failed")))
+	if excludeFailed == "true" || excludeFailed == "1" {
+		query = query.Where("exams.schedule_status NOT IN ?", []string{models.ExamScheduleAssignFail, models.ExamScheduleNotifyFail})
+	}
 
 	// 过滤：按楼宇 (需要关联查询)
 	building := c.Query("building")
