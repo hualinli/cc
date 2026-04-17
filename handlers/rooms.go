@@ -19,6 +19,7 @@ func CreateRoom(c *gin.Context) {
 	type Input struct {
 		Name     string `json:"name" binding:"required"`
 		Building string `json:"building" binding:"required"`
+		Type     string `json:"type"`
 		RTSPUrl  string `json:"rtsp_url" binding:"required"`
 	}
 
@@ -33,6 +34,7 @@ func CreateRoom(c *gin.Context) {
 
 	name := strings.TrimSpace(input.Name)
 	building := strings.TrimSpace(input.Building)
+	roomType := strings.TrimSpace(input.Type)
 	rtspURL := strings.TrimSpace(input.RTSPUrl)
 	if name == "" || building == "" || rtspURL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -46,6 +48,9 @@ func CreateRoom(c *gin.Context) {
 		Name:     name,
 		Building: building,
 		RTSPUrl:  rtspURL,
+	}
+	if roomType != "" {
+		room.Type = &roomType
 	}
 
 	if err := models.DB.Create(&room).Error; err != nil {
@@ -96,6 +101,7 @@ func UpdateRoom(c *gin.Context) {
 	type Input struct {
 		Name     *string `json:"name"`
 		Building *string `json:"building"`
+		Type     *string `json:"type"`
 		RTSPUrl  *string `json:"rtsp_url"`
 	}
 
@@ -130,6 +136,14 @@ func UpdateRoom(c *gin.Context) {
 			return
 		}
 		updates["building"] = building
+	}
+	if input.Type != nil {
+		roomType := strings.TrimSpace(*input.Type)
+		if roomType == "" {
+			updates["type"] = nil
+		} else {
+			updates["type"] = roomType
+		}
 	}
 	if input.RTSPUrl != nil {
 		rtspURL := strings.TrimSpace(*input.RTSPUrl)

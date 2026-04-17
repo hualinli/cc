@@ -124,7 +124,7 @@
                             <th>异常次数</th>
                             <th>操作</th>
                         </tr>
-                            <th>序号</th>
+                        <th>序号</th>
                     <tbody id="exam-list-body"></tbody>
                 </table>
             </div>
@@ -343,6 +343,7 @@
                             <th>序号</th>
                             <th>楼栋</th>
                             <th>教室名称</th>
+                            <th>教室类型</th>
                             <th>RTSP地址</th>
                             <th>创建时间</th>
                             <th>操作</th>
@@ -451,6 +452,17 @@
             <div class="form-row">
                 <label>教室名称</label>
                 <input type="text" id="modalRoomName" placeholder="请输入教室名称">
+            </div>
+            <div class="form-row">
+                <label>教室类型</label>
+                <select id="modalRoomType">
+                    <option value="">请选择教室类型</option>
+                    <option value="阶梯教室">阶梯教室</option>
+                    <option value="大多媒体教室">大多媒体教室</option>
+                    <option value="小多媒体教室">小多媒体教室</option>
+                    <option value="研讨室">研讨室</option>
+                    <option value="会议室">会议室</option>
+                </select>
             </div>
             <div class="form-row">
                 <label>RTSP地址</label>

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -46,7 +47,7 @@ func TestSyncRoomsSuccess(t *testing.T) {
 	defer cleanup()
 
 	// 按要求通过 create API 创建多条可重复教室数据
-	w1 := performCreateRoomRequest(t, `{"name":"A101","building":"Main","rtsp_url":"rtsp://cam/1"}`)
+	w1 := performCreateRoomRequest(t, `{"name":"A101","building":"Main","type":"阶梯教室","rtsp_url":"rtsp://cam/1"}`)
 	if w1.Code != http.StatusOK {
 		t.Fatalf("failed to create first room, status=%d, body=%s", w1.Code, w1.Body.String())
 	}
@@ -68,23 +69,31 @@ func TestSyncRoomsSuccess(t *testing.T) {
 			t.Fatalf("expected token token-1, got %s", r.URL.Query().Get("token"))
 		}
 
-		var payload struct {
-			Version    string `json:"version"`
-			Classrooms []struct {
-				ID       uint   `json:"id"`
-				Building string `json:"building"`
-				Name     string `json:"name"`
-				URL      string `json:"url"`
-			} `json:"classrooms"`
-		}
+		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 			t.Fatalf("failed to decode payload: %v", err)
 		}
-		if payload.Version != "1.0" {
-			t.Fatalf("expected version 1.0, got %s", payload.Version)
+		version, ok := payload["version"].(string)
+		if !ok || version != "1.0" {
+			t.Fatalf("expected version 1.0, got %v", payload["version"])
 		}
-		if len(payload.Classrooms) != 2 {
-			t.Fatalf("expected 2 classrooms, got %d", len(payload.Classrooms))
+
+		classrooms, ok := payload["classrooms"].([]any)
+		if !ok {
+			t.Fatalf("expected classrooms array, got %T", payload["classrooms"])
+		}
+		if len(classrooms) != 2 {
+			t.Fatalf("expected 2 classrooms, got %d", len(classrooms))
+		}
+
+		for i, classroom := range classrooms {
+			item, ok := classroom.(map[string]any)
+			if !ok {
+				t.Fatalf("expected classroom item as object, got %s", reflect.TypeOf(classroom))
+			}
+			if _, exists := item["type"]; exists {
+				t.Fatalf("expected classrooms[%d] without type field, got %v", i, item)
+			}
 		}
 
 		w.WriteHeader(http.StatusOK)

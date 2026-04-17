@@ -1666,6 +1666,7 @@ async function fetchRooms() {
             <td>${idx + 1}</td>
                 <td>${room.building}</td>
                 <td>${room.name}</td>
+                <td>${room.type || '-'}</td>
                 <td style="font-family: monospace; font-size: 11px;">${room.rtsp_url}</td>
                 <td>${formatDateTime(room.created_at)}</td>
                 <td>
@@ -1695,6 +1696,7 @@ function openRoomModal(mode, roomData = null) {
     document.getElementById('modalRoomId').value = '';
     document.getElementById('modalRoomName').value = '';
     document.getElementById('modalRoomBuilding').value = '';
+    document.getElementById('modalRoomType').value = '';
     document.getElementById('modalRoomRTSPUrl').value = '';
 
     if (mode === 'add') {
@@ -1708,6 +1710,7 @@ function openRoomModal(mode, roomData = null) {
         document.getElementById('modalRoomId').value = roomData.id;
         document.getElementById('modalRoomName').value = roomData.name;
         document.getElementById('modalRoomBuilding').value = roomData.building;
+        document.getElementById('modalRoomType').value = roomData.type || '';
         document.getElementById('modalRoomRTSPUrl').value = roomData.rtsp_url;
     }
 
@@ -1722,9 +1725,10 @@ async function submitRoom() {
     const id = document.getElementById('modalRoomId').value;
     const name = document.getElementById('modalRoomName').value;
     const building = document.getElementById('modalRoomBuilding').value;
+    const type = document.getElementById('modalRoomType').value;
     const rtspUrl = document.getElementById('modalRoomRTSPUrl').value;
 
-    if (!name || !building || !rtspUrl) {
+    if (!name || !building || !type || !rtspUrl) {
         alert("请填写完整信息");
         return;
     }
@@ -1733,7 +1737,7 @@ async function submitRoom() {
     const url = isEdit ? `/api/rooms/${id}` : '/api/rooms';
     const method = isEdit ? 'PUT' : 'POST';
 
-    const body = { name, building, rtsp_url: rtspUrl };
+    const body = { name, building, type, rtsp_url: rtspUrl };
 
     try {
         const { response, result, aborted } = await requestJSON(url, {
