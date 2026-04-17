@@ -165,6 +165,30 @@ function formatDateTime(timeStr) {
     return date ? date.toLocaleString() : '-';
 }
 
+function formatRoomTag(room) {
+    if (!room) return '未知';
+    const building = String(room.building || '').trim();
+    const name = String(room.name || '').trim();
+    if (building && name) return `${building}${name}`;
+    if (name) return name;
+    if (building) return building;
+    return '未知';
+}
+
+function formatExamEndTime(exam) {
+    if (exam?.end_time) {
+        return formatDateTime(exam.end_time);
+    }
+
+    const startDate = parseValidDate(exam?.start_time);
+    const durationSeconds = Number(exam?.duration_seconds || 0);
+    if (!startDate || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+        return '-';
+    }
+
+    return formatDateTime(new Date(startDate.getTime() + durationSeconds * 1000));
+}
+
 function handleAuthFailure(response) {
     if (!response) return false;
     if (response.status === 401) {
@@ -233,7 +257,7 @@ async function fetchHistory() {
         tbody.innerHTML = '';
 
         if (exams.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">暂无已结束考试记录</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted);">暂无已结束考试记录</td></tr>';
             return;
         }
 
@@ -257,6 +281,7 @@ async function fetchHistory() {
                     <td>EXP-${e.id}</td>
                     <td>${formatDateTime(e.start_time)}</td>
                     <td>${e.subject || '未知'}</td>
+                    <td>${e.room?.building || '-'}</td>
                     <td>${e.room ? e.room.name : '未知'}</td>
                     <td class="${anomalyCount > 0 ? 'text-danger' : 'text-success'}">${anomalyCount}</td>
                     <td><button onclick="viewExamAnomalies(${e.id})" style="padding: 4px 8px; font-size: 12px;">查看异常</button></td>
@@ -297,7 +322,7 @@ async function fetchExamManagement() {
         tbody.innerHTML = '';
 
         if (exams.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; color: var(--text-muted);">暂无考试数据</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; color: var(--text-muted);">暂无考试数据</td></tr>';
             return;
         }
 
@@ -311,6 +336,7 @@ async function fetchExamManagement() {
                     <td>EXP-${e.id}</td>
                     <td>${escapeHtml(e.name || '-')}</td>
                     <td>${escapeHtml(e.subject || '-')}</td>
+                    <td>${escapeHtml(e.room?.building || '-')}</td>
                     <td>${escapeHtml(e.room?.name || '-')}</td>
                     <td>${escapeHtml(e.user?.username || '-')}</td>
                     <td>${formatDateTime(e.start_time)}</td>
@@ -825,7 +851,7 @@ async function refreshData() {
                         <td>${e.room ? e.room.name : '未知'}</td>
                         <td>${e.node ? e.node.name : '未知'}</td>
                         <td>${formatDateTime(e.start_time)}</td>
-                        <td>${e.end_time ? formatDateTime(e.end_time) : '进行中'}</td>
+                        <td>${formatExamEndTime(e)}</td>
                         <td>${e.examinee_count || 0}</td>
                         <td><span style="color: ${e.anomalies_count > 0 ? '#ef4444' : '#10b981'}">${e.anomalies_count || 0}</span></td>
                         <td>
@@ -950,7 +976,7 @@ async function loadOngoingExamsForSelection() {
                 <div>
                     <div style="font-weight: bold; color: #fff;">${exam.subject}</div>
                     <div style="font-size: 13px; color: #9ca3af; margin-top: 4px;">
-                        <i class="fa-solid fa-school"></i> ${exam.room ? exam.room.name : (exam.Room ? exam.Room.name : '未知')} 
+                        <i class="fa-solid fa-school"></i> ${formatRoomTag(exam.room)} 
                         | <i class="fa-solid fa-server"></i> ${exam.node ? exam.node.name : (exam.Node ? exam.Node.name : '未知')}
                     </div>
                 </div>
@@ -1007,7 +1033,7 @@ async function selectStream(examId) {
                 <div style="width: 100%; height: 100%; position: relative; pointer-events: none; background: #000; border-radius: 8px; overflow: hidden;">
                     <img src="${streamUrl}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: auto;">
                     <div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); padding: 4px 8px; font-size: 11px; color: white; display: flex; justify-content: space-between; align-items: center; pointer-events: auto;">
-                        <span>${exam.room ? exam.room.name : '未知'} - ${exam.subject}</span>
+                        <span>${formatRoomTag(exam.room)} - ${exam.subject}</span>
                         <i class="fa-solid fa-xmark reset-box" onclick="resetBox(event, ${index}, ${isSingle})" style="cursor: pointer; padding: 2px 5px;"></i>
                     </div>
                 </div>
@@ -1482,7 +1508,7 @@ async function fetchExamsForConsole() {
             } else {
                 exams.forEach(exam => {
                     const startTime = formatDateTime(exam.start_time);
-                    const endTime = exam.end_time ? formatDateTime(exam.end_time) : '进行中';
+                    const endTime = formatExamEndTime(exam);
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td>EXP-${exam.id}</td>
