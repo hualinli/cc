@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const normalized = { ...node };
         if (normalized.id === undefined && normalized.ID !== undefined) normalized.id = normalized.ID;
         if (normalized.current_user_id === undefined && normalized.CurrentUserID !== undefined) normalized.current_user_id = normalized.CurrentUserID;
+        if (normalized.current_exam_id === undefined && normalized.CurrentExamID !== undefined) normalized.current_exam_id = normalized.CurrentExamID;
         if (normalized.last_heartbeat_at === undefined && normalized.LastHeartbeatAt !== undefined) normalized.last_heartbeat_at = normalized.LastHeartbeatAt;
         return normalized;
     }
@@ -90,11 +91,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         nodeGrid.innerHTML = nodes.map(node => {
-            const isOccupied = !!node.current_user_id;
+            const isOccupied = !!node.current_user_id || !!node.current_exam_id || node.status === 'busy';
+            const isUnavailable = node.status === 'offline' || node.status === 'error';
             const statusClass = `status-${node.status}`;
             let statusText = isOccupied ? '已占用' : '未占用';
             if (node.status === 'offline') statusText = '离线';
             if (node.status === 'error') statusText = '异常';
+            if (node.status === 'busy') statusText = '监考中';
+
+            let actionText = isOccupied ? '继续监考' : '进入监考';
+            let actionIcon = isOccupied ? 'fa-play' : 'fa-right-to-bracket';
+            if (isUnavailable) {
+                actionText = node.status === 'error' ? '节点异常' : '节点离线';
+                actionIcon = 'fa-ban';
+            }
+
+            const buttonAttrs = isUnavailable
+                ? 'disabled aria-disabled="true"'
+                : `onclick="enterNode(${node.id})"`;
 
             return `
                 <div class="node-card ${isOccupied ? 'my-node' : ''}">
@@ -121,9 +135,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>
                     </div>
                     <button class="enter-btn ${isOccupied ? 'resume' : ''}" 
-                            onclick="enterNode(${node.id})">
-                        <i class="fa-solid ${isOccupied ? 'fa-play' : 'fa-right-to-bracket'}"></i>
-                        ${isOccupied ? '继续监考' : '进入监考'}
+                            ${buttonAttrs}>
+                        <i class="fa-solid ${actionIcon}"></i>
+                        ${actionText}
                     </button>
                 </div>
             `;
@@ -211,6 +225,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial load
     fetchUserInfo();
     fetchNodes();
-    // Refresh every 10 seconds for more responsive updates
-    setInterval(fetchNodes, 10000);
+
+    // 页面重新可见时立即刷新，避免后台标签页恢复后状态滞后。
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+            fetchNodes();
+        }
+    });
+
+    // 缩短轮询间隔，降低状态变化感知延迟。
+    setInterval(fetchNodes, 3000);
 });
