@@ -1539,12 +1539,12 @@ async function fetchExamsForConsole() {
             if (exams.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #9ca3af;">暂无正在进行的考试</td></tr>';
             } else {
-                exams.forEach(exam => {
+                exams.forEach((exam, index) => {
                     const startTime = formatDateTime(exam.start_time);
                     const endTime = formatExamEndTime(exam);
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
-                        <td>EXP-${exam.id}</td>
+                        <td>${index + 1}</td>
                         <td>${exam.subject || '未知'}</td>
                         <td>${exam.room?.building || '-'}</td>
                         <td>${exam.room?.name || '未知'}</td>
