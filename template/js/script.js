@@ -1249,6 +1249,24 @@ async function submitUser() {
     }
 }
 
+async function deleteUser(id, username) {
+    if (!confirm(`确定要删除用户 "${username}" 吗？`)) return;
+
+    try {
+        const { response, result, aborted } = await requestJSON(`/api/users/${id}`, { method: 'DELETE' });
+        if (aborted || !result) return;
+
+        if (response.ok && result.success) {
+            alert('删除成功');
+            fetchUsers();
+        } else {
+            alert(result.error || '删除失败');
+        }
+    } catch (err) {
+        alert('网络请求出错');
+    }
+}
+
 async function changePassword() {
     const oldPass = document.getElementById('oldPassword').value;
     const newPass = document.getElementById('newPassword').value;
