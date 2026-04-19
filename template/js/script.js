@@ -856,10 +856,10 @@ async function refreshData() {
             if (exams.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: #9ca3af;">暂无正在进行的考试</td></tr>';
             } else {
-                exams.forEach(e => {
+                exams.forEach((e, index) => {
                     const tr = `
                     <tr>
-                        <td>EXP-${e.id}</td>
+                        <td>${index + 1}</td>
                         <td>${e.subject || '未知'}</td>
                         <td>${e.room && e.room.building ? e.room.building : '-'}</td>
                         <td>${e.room ? e.room.name : '未知'}</td>
