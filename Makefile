@@ -7,4 +7,11 @@ build:
 	go build -o bin/main main.go
 
 build-arm64:
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/main_arm64 main.go
+		docker run --rm \
+		-v $(CURDIR):/app \
+		-v /tmp/go-cache:/go/pkg/mod \
+		-w /app \
+		--platform linux/arm64 \
+		-e CGO_ENABLED=1 \
+		-e GOPROXY=https://goproxy.cn,direct \
+		golang:1.26 go build -o bin/main_arm64 main.go
