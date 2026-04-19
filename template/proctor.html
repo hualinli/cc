@@ -17,7 +17,8 @@
         </div>
         <div class="user-info">
             <span id="usernameDisplay">监考员</span>
-            <button onclick="openPasswordModal()" class="action-btn" style="border:none; cursor:pointer; font-family:inherit; background:transparent; color:#9ca3af; margin-right: 15px;">
+            <button onclick="openPasswordModal()" class="action-btn"
+                style="border:none; cursor:pointer; font-family:inherit; background:transparent; color:#9ca3af; margin-right: 15px;">
                 <i class="fa-solid fa-key"></i> 修改密码
             </button>
             <button onclick="logout()" class="logout-btn" style="border:none; cursor:pointer; font-family:inherit;">
@@ -29,7 +30,7 @@
     <div class="container">
         <header class="header">
             <h1>选择监考节点</h1>
-            <p>请从下方选择一个空闲的监考节点进入工作状态。</p>
+            <p>请从下方选择对应的监考节点进入工作状态。</p>
         </header>
 
         <div id="nodeGrid" class="node-grid">
@@ -54,19 +55,24 @@
             <h2 style="margin-bottom: 20px; font-size: 1.25rem;">修改登录密码</h2>
             <div class="form-group">
                 <label>旧密码</label>
-                <input type="password" id="oldPassword" placeholder="请输入旧密码" style="width: 100%; padding: 10px; margin-top: 5px; border: 1px solid var(--border-color); border-radius: 4px;">
+                <input type="password" id="oldPassword" placeholder="请输入旧密码"
+                    style="width: 100%; padding: 10px; margin-top: 5px; border: 1px solid var(--border-color); border-radius: 4px;">
             </div>
             <div class="form-group" style="margin-top: 15px;">
                 <label>新密码</label>
-                <input type="password" id="newPassword" placeholder="请输入新密码" style="width: 100%; padding: 10px; margin-top: 5px; border: 1px solid var(--border-color); border-radius: 4px;">
+                <input type="password" id="newPassword" placeholder="请输入新密码"
+                    style="width: 100%; padding: 10px; margin-top: 5px; border: 1px solid var(--border-color); border-radius: 4px;">
             </div>
             <div class="form-group" style="margin-top: 15px;">
                 <label>确认新密码</label>
-                <input type="password" id="confirmPassword" placeholder="请再次输入新密码" style="width: 100%; padding: 10px; margin-top: 5px; border: 1px solid var(--border-color); border-radius: 4px;">
+                <input type="password" id="confirmPassword" placeholder="请再次输入新密码"
+                    style="width: 100%; padding: 10px; margin-top: 5px; border: 1px solid var(--border-color); border-radius: 4px;">
             </div>
             <div style="display: flex; gap: 10px; margin-top: 25px;">
-                <button onclick="closePasswordModal()" style="flex: 1; padding: 10px; border-radius: 4px; border: 1px solid var(--border-color); background: #f3f4f6; cursor: pointer;">取消</button>
-                <button onclick="submitPasswordChange()" style="flex: 1; padding: 10px; border-radius: 4px; border: none; background: var(--primary-color); color: white; cursor: pointer;">确认修改</button>
+                <button onclick="closePasswordModal()"
+                    style="flex: 1; padding: 10px; border-radius: 4px; border: 1px solid var(--border-color); background: #f3f4f6; cursor: pointer;">取消</button>
+                <button onclick="submitPasswordChange()"
+                    style="flex: 1; padding: 10px; border-radius: 4px; border: none; background: var(--primary-color); color: white; cursor: pointer;">确认修改</button>
             </div>
         </div>
     </div>
@@ -81,6 +87,7 @@
             align-items: center;
             z-index: 1000;
         }
+
         .modal {
             background: white;
             padding: 2rem;

@@ -282,8 +282,8 @@ func ListNodes(c *gin.Context) {
 	query := models.DB
 
 	if roleStr == "proctor" {
-		// 监考员只能看到：未被占用的节点（current_user_id IS NULL）或 自己占用的节点
-		query = query.Where("current_user_id IS NULL OR current_user_id = ?", userID)
+		// 监考员只能看到：自己占用的节点
+		query = query.Where("current_user_id = ?", userID)
 	}
 	// 管理员可以看到所有节点
 
