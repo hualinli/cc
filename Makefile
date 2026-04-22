@@ -8,7 +8,7 @@ build:
 	go build -o bin/main main.go
 
 build-arm64-linux:
-		rm -rf bin/
+		rm bin/main_arm64_linux || true
 		docker run --rm \
 		-v $(CURDIR):/app \
 		-v /tmp/go-cache:/go/pkg/mod \
@@ -19,7 +19,7 @@ build-arm64-linux:
 		golang:1.26.2 go build -o bin/main_arm64_linux main.go
 
 build-amd64-linux:
-		rm -rf bin/
+		rm bin/main_amd64_linux || true
 		docker run --rm \
 		-v $(CURDIR):/app \
 		-v /tmp/go-cache:/go/pkg/mod \
