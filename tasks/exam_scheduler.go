@@ -324,7 +324,7 @@ func notifyNodeStartExam(node models.Node, exam models.Exam) error {
 		return err
 	}
 
-	startURL := fmt.Sprintf("http://%s/exam/start", node.Address)
+	startURL := fmt.Sprintf("http://%s/exam/schedule_start", node.Address)
 	parsedURL, err := url.Parse(startURL)
 	if err != nil {
 		return err
