@@ -5,18 +5,69 @@ import (
 	"cc/middleware"
 	"cc/models"
 	"cc/tasks"
+	"embed"
+	"io/fs"
 	"net/http"
+	"path/filepath"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 )
 
+//go:embed template
+var embeddedTemplateFS embed.FS
+
+func mustSubFS(root fs.FS, dir string) fs.FS {
+	subFS, err := fs.Sub(root, dir)
+	if err != nil {
+		panic(err)
+	}
+	return subFS
+}
+
+func serveEmbeddedFile(c *gin.Context, filePath string) {
+	data, err := embeddedTemplateFS.ReadFile(filePath)
+	if err != nil {
+		c.Status(http.StatusNotFound)
+		return
+	}
+
+	contentType := mimeTypeForFile(filePath)
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+
+	c.Data(http.StatusOK, contentType, data)
+}
+
+func mimeTypeForFile(filePath string) string {
+	switch filepath.Ext(filePath) {
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".js":
+		return "application/javascript; charset=utf-8"
+	case ".html":
+		return "text/html; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".woff":
+		return "font/woff"
+	case ".woff2":
+		return "font/woff2"
+	case ".ttf":
+		return "font/ttf"
+	default:
+		return ""
+	}
+}
+
 func main() {
 	models.Init()
 	tasks.StartCleanupTask()
 	tasks.StartExamScheduler()
 	r := gin.Default()
+	templateFS := mustSubFS(embeddedTemplateFS, "template")
 
 	store := cookie.NewStore([]byte("secret-key"))
 	store.Options(sessions.Options{
@@ -29,11 +80,13 @@ func main() {
 	r.Use(sessions.Sessions("session", store))
 
 	// 静态文件
-	r.Static("/css", "./template/css")
-	r.Static("/js", "./template/js")
-	r.Static("/webfonts", "./template/webfonts")
+	r.StaticFS("/css", http.FS(mustSubFS(templateFS, "css")))
+	r.StaticFS("/js", http.FS(mustSubFS(templateFS, "js")))
+	r.StaticFS("/webfonts", http.FS(mustSubFS(templateFS, "webfonts")))
 	r.Static("/uploads", "./uploads")
-	r.StaticFile("/login", "./template/login.html")
+	r.GET("/login", func(c *gin.Context) {
+		serveEmbeddedFile(c, "template/login.html")
+	})
 
 	// favicon 处理
 	r.GET("/favicon.ico", func(c *gin.Context) {
@@ -53,17 +106,17 @@ func main() {
 			session := sessions.Default(c)
 			role := session.Get("role")
 			if role == "admin" {
-				c.File("./template/proctor.html")
+				serveEmbeddedFile(c, "template/proctor.html")
 				return
 			}
-			c.File("./template/proctor.html")
+			serveEmbeddedFile(c, "template/proctor.html")
 		})
 
 		admin := authorized.Group("/admin")
 		admin.Use(middleware.AdminMiddleware())
 		{
 			admin.GET("/", func(c *gin.Context) {
-				c.File("./template/index.html")
+				serveEmbeddedFile(c, "template/index.html")
 			})
 		}
 	}
