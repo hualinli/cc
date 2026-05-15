@@ -83,6 +83,7 @@ func main() {
 	r.StaticFS("/css", http.FS(mustSubFS(templateFS, "css")))
 	r.StaticFS("/js", http.FS(mustSubFS(templateFS, "js")))
 	r.StaticFS("/webfonts", http.FS(mustSubFS(templateFS, "webfonts")))
+	r.StaticFS("/template", http.FS(templateFS))
 	r.Static("/uploads", "./uploads")
 	r.GET("/login", func(c *gin.Context) {
 		serveEmbeddedFile(c, "template/login.html")

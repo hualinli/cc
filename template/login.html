@@ -15,31 +15,35 @@
     <div class="login-container">
         <div class="login-card">
             <div class="login-header">
-                <i class="fa-solid fa-eye"></i>
-                <h2>智慧监考系统</h2>
-                <p>Smart Proctoring System V1.0</p>
+                <img class="logo-image" src="/template/logo4.png" alt="智慧监考系统 Logo">
+                <h2>智慧监考管理平台</h2>
+                <p>请输入管理员账号和密码</p>
             </div>
 
             <form id="loginForm">
                 <div class="form-group">
+                    <label class="field-label" for="username">账号</label>
                     <i class="fa-solid fa-user"></i>
-                    <input type="text" name="username" placeholder="用户名" required autocomplete="username">
+                    <input type="text" id="username" name="username" placeholder="请输入管理员账号" required
+                        autocomplete="username">
                 </div>
                 <div class="form-group">
+                    <label class="field-label" for="password">密码</label>
                     <i class="fa-solid fa-lock"></i>
-                    <input type="password" name="password" placeholder="密码" required autocomplete="current-password">
+                    <input type="password" id="password" name="password" placeholder="请输入管理员密码" required
+                        autocomplete="current-password">
                 </div>
                 <button type="submit" id="loginBtn" class="login-btn">
                     <span class="btn-loader" style="display: none;"><i
                             class="fa-solid fa-circle-notch fa-spin"></i></span>
-                    <span class="btn-text">进入系统</span>
+                    <span class="btn-text">登 录</span>
                 </button>
             </form>
 
             <div id="errorBox" class="error-msg"></div>
 
             <div class="footer-text">
-                &copy; 2024 智慧监考系统 版权所有
+                &copy; 2026 智慧监考系统 版权所有
             </div>
         </div>
     </div>
