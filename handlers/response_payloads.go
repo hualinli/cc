@@ -24,21 +24,30 @@ type roomPayload struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type nodeExamPayload struct {
+	ID        uint         `json:"id"`
+	Subject   string       `json:"subject"`
+	StartTime time.Time    `json:"start_time"`
+	EndTime   *time.Time   `json:"end_time,omitempty"`
+	Room      *roomPayload `json:"room,omitempty"`
+}
+
 type nodePayload struct {
-	ID                    uint       `json:"id"`
-	Name                  string     `json:"name"`
-	Token                 string     `json:"token"`
-	NodeModel             string     `json:"nodemodel"`
-	Address               string     `json:"address"`
-	Status                string     `json:"status"`
-	Version               string     `json:"version"`
-	ConfigVersion         int        `json:"config_version"`
-	CurrentUserID         *uint      `json:"current_user_id"`
-	CurrentUserOccupiedAt *time.Time `json:"current_user_occupied_at"`
-	CurrentExamID         *uint      `json:"current_exam_id"`
-	LastHeartbeatAt       time.Time  `json:"last_heartbeat_at"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
+	ID                    uint             `json:"id"`
+	Name                  string           `json:"name"`
+	Token                 string           `json:"token"`
+	NodeModel             string           `json:"nodemodel"`
+	Address               string           `json:"address"`
+	Status                string           `json:"status"`
+	Version               string           `json:"version"`
+	ConfigVersion         int              `json:"config_version"`
+	CurrentUserID         *uint            `json:"current_user_id"`
+	CurrentUserOccupiedAt *time.Time       `json:"current_user_occupied_at"`
+	CurrentExamID         *uint            `json:"current_exam_id"`
+	CurrentExam           *nodeExamPayload `json:"current_exam,omitempty"`
+	LastHeartbeatAt       time.Time        `json:"last_heartbeat_at"`
+	CreatedAt             time.Time        `json:"created_at"`
+	UpdatedAt             time.Time        `json:"updated_at"`
 }
 
 type examPayload struct {
@@ -102,6 +111,34 @@ func toNodePayload(n models.Node) nodePayload {
 		CreatedAt:             n.CreatedAt,
 		UpdatedAt:             n.UpdatedAt,
 	}
+}
+
+func toNodeExamPayload(e models.Exam) nodeExamPayload {
+	payload := nodeExamPayload{
+		ID:        e.ID,
+		Subject:   e.Subject,
+		StartTime: e.StartTime,
+		EndTime:   e.EndTime,
+	}
+
+	if e.Room != nil {
+		room := toRoomPayload(*e.Room)
+		payload.Room = &room
+	}
+
+	return payload
+}
+
+func toNodePayloadWithExam(n models.Node) nodePayload {
+	payload := toNodePayload(n)
+	// 仅在节点非 offline 且当前考试仍在进行时，才返回当前考试摘要，避免展示已结束或脏数据。
+	if n.CurrentExam != nil {
+		if n.CurrentExam.EndTime == nil && n.Status != "offline" {
+			exam := toNodeExamPayload(*n.CurrentExam)
+			payload.CurrentExam = &exam
+		}
+	}
+	return payload
 }
 
 func toExamPayload(e models.Exam) examPayload {

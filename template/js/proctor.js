@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (normalized.id === undefined && normalized.ID !== undefined) normalized.id = normalized.ID;
         if (normalized.current_user_id === undefined && normalized.CurrentUserID !== undefined) normalized.current_user_id = normalized.CurrentUserID;
         if (normalized.current_exam_id === undefined && normalized.CurrentExamID !== undefined) normalized.current_exam_id = normalized.CurrentExamID;
+        if (normalized.current_exam === undefined && normalized.CurrentExam !== undefined) normalized.current_exam = normalized.CurrentExam;
         if (normalized.last_heartbeat_at === undefined && normalized.LastHeartbeatAt !== undefined) normalized.last_heartbeat_at = normalized.LastHeartbeatAt;
         return normalized;
     }
@@ -91,6 +92,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         nodeGrid.innerHTML = nodes.map(node => {
+            const currentExam = node.current_exam || null;
+            const room = currentExam && currentExam.room ? currentExam.room : null;
+            const examLocation = currentExam
+                ? [room && room.building, room && room.name].filter(Boolean).join(' ') || '未知地点'
+                : '暂无当前考试';
+            const examSubject = currentExam ? (currentExam.subject || '未填写科目') : '暂无当前考试';
+            const examTime = currentExam ? formatExamTime(currentExam.start_time) : '暂无当前考试';
             const isOccupied = !!node.current_user_id || !!node.current_exam_id || node.status === 'busy';
             const isUnavailable = node.status === 'offline' || node.status === 'error';
             const statusClass = `status-${node.status}`;
@@ -99,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (node.status === 'error') statusText = '异常';
             if (node.status === 'busy') statusText = '监考中';
 
-            let actionText = isOccupied ? '继续监考' : '进入监考';
+            let actionText = isOccupied ? '进入监考' : '进入监考';
             let actionIcon = isOccupied ? 'fa-play' : 'fa-right-to-bracket';
             if (isUnavailable) {
                 actionText = node.status === 'error' ? '节点异常' : '节点离线';
@@ -122,16 +130,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <div class="node-info">
                         <div class="info-item">
-                            <i class="fa-solid fa-microchip"></i>
-                            <span>型号: ${node.nodemodel || '-'}</span>
+                            <i class="fa-solid fa-location-dot"></i>
+                            <span>考试地点: ${examLocation}</span>
                         </div>
                         <div class="info-item">
-                            <i class="fa-solid fa-network-wired"></i>
-                            <span>地址: ${node.address}</span>
+                            <i class="fa-solid fa-book-open"></i>
+                            <span>考试科目: ${examSubject}</span>
                         </div>
                         <div class="info-item">
-                            <i class="fa-solid fa-clock"></i>
-                            <span>最后心跳: ${formatTime(node.last_heartbeat_at)}</span>
+                            <i class="fa-solid fa-calendar-days"></i>
+                            <span>考试时间: ${examTime}</span>
                         </div>
                     </div>
                     <button class="enter-btn ${isOccupied ? 'resume' : ''}" 
@@ -166,12 +174,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    function formatTime(timeStr) {
+    function formatExamTime(timeStr) {
         if (!timeStr) return '未知';
         const date = new Date(timeStr);
         if (Number.isNaN(date.getTime())) return '无效时间';
         if (date.getUTCFullYear() <= 1971) return '未知';
-        return date.toLocaleTimeString();
+        return date.toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     }
 
     // --- 修改密码逻辑 ---

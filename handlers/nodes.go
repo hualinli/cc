@@ -80,7 +80,7 @@ func CreateNode(c *gin.Context) {
 func DeleteNode(c *gin.Context) {
 	var node models.Node
 
-	if err := models.DB.Where("id = ?", c.Param("id")).First(&node).Error; err != nil {
+	if err := models.DB.Preload("CurrentExam.Room").Where("id = ?", c.Param("id")).First(&node).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"error":   "节点不存在",
@@ -252,7 +252,7 @@ func GetNode(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    toNodePayload(node),
+		"data":    toNodePayloadWithExam(node),
 	})
 }
 
@@ -287,7 +287,7 @@ func ListNodes(c *gin.Context) {
 	}
 	// 管理员可以看到所有节点
 
-	if err := query.Find(&nodes).Error; err != nil {
+	if err := query.Preload("CurrentExam.Room").Find(&nodes).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "获取节点列表失败: " + err.Error(),
@@ -300,7 +300,7 @@ func ListNodes(c *gin.Context) {
 		"data": func() []nodePayload {
 			result := make([]nodePayload, 0, len(nodes))
 			for _, n := range nodes {
-				result = append(result, toNodePayload(n))
+				result = append(result, toNodePayloadWithExam(n))
 			}
 			return result
 		}(),
