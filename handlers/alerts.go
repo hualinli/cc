@@ -11,28 +11,6 @@ import (
 	"gorm.io/gorm"
 )
 
-var validAlertTypes = map[models.AlertType]struct{}{
-	models.AlertTypePhoneCheating: {},
-	models.AlertTypeLookAround:    {},
-	models.AlertTypeWhispering:    {},
-	models.AlertTypeLeaveSheet:    {},
-	models.AlertTypeStandUp:       {},
-	models.AlertTypeOther:         {},
-	// 节点模型 class_names 直传兼容。
-	models.AlertType("front"):   {},
-	models.AlertType("head"):    {},
-	models.AlertType("limb"):    {},
-	models.AlertType("normal"):  {},
-	models.AlertType("sleep"):   {},
-	models.AlertType("stand"):   {},
-	models.AlertType("unknown"): {},
-}
-
-func isValidAlertType(alertType models.AlertType) bool {
-	_, ok := validAlertTypes[alertType]
-	return ok
-}
-
 func getUintFromJSON(value any) (uint, bool) {
 	switch v := value.(type) {
 	case float64:
@@ -70,12 +48,6 @@ func ListAlerts(c *gin.Context) {
 	examID := c.Query("exam_id")
 	if examID != "" {
 		query = query.Where("alerts.exam_id = ?", examID)
-	}
-
-	// 过滤：按异常类型
-	alertType := c.Query("type")
-	if alertType != "" {
-		query = query.Where("alerts.type = ?", alertType)
 	}
 
 	// 过滤：按教室ID
@@ -118,10 +90,6 @@ func CreateAlert(c *gin.Context) {
 
 	if alert.ExamID == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "exam_id 无效"})
-		return
-	}
-	if !isValidAlertType(alert.Type) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "type 无效"})
 		return
 	}
 
@@ -175,14 +143,6 @@ func UpdateAlert(c *gin.Context) {
 	for key := range updates {
 		if _, ok := allowedFields[key]; !ok {
 			delete(updates, key)
-		}
-	}
-
-	if rawType, ok := updates["type"]; ok {
-		typeStr, ok := rawType.(string)
-		if !ok || !isValidAlertType(models.AlertType(typeStr)) {
-			c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "type 无效"})
-			return
 		}
 	}
 

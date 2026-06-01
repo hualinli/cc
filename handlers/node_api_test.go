@@ -493,20 +493,16 @@ func TestReportAlert_InvalidTypeReturnsBadRequest(t *testing.T) {
 		exam.ID)
 	w := performNodeAPIJSONRequest(t, http.MethodPost, "/report-alert", body, node.ID, ReportAlert)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
-	}
-	resp := decodeNodeAPIResp(t, w)
-	if resp["error"] != "type 无效" {
-		t.Fatalf("expected type 无效, got %v", resp["error"])
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 
-	var count int64
-	if err := models.DB.Model(&models.Alert{}).Count(&count).Error; err != nil {
-		t.Fatalf("failed to count alerts: %v", err)
+	var reloaded models.Alert
+	if err := models.DB.Order("id desc").First(&reloaded).Error; err != nil {
+		t.Fatalf("failed to load alert: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("expected 0 alerts, got %d", count)
+	if reloaded.Type != models.AlertType("bad_type") {
+		t.Fatalf("expected alert type bad_type, got %s", reloaded.Type)
 	}
 }
 

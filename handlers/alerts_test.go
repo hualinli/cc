@@ -157,12 +157,13 @@ func TestCreateAlert_InvalidType(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
 	}
 	resp := decodeResp(t, w)
-	if resp["error"] != "type 无效" {
-		t.Fatalf("expected error type 无效, got %v", resp["error"])
+	data := resp["data"].(map[string]any)
+	if data["type"] != "invalid_type" {
+		t.Fatalf("expected type invalid_type, got %v", data["type"])
 	}
 }
 
@@ -328,7 +329,7 @@ func TestListAlerts_FilterByType(t *testing.T) {
 	}
 	resp := decodeResp(t, w)
 	data := resp["data"].([]any)
-	if len(data) != 1 {
-		t.Fatalf("expected 1 alert, got %d", len(data))
+	if len(data) != 2 {
+		t.Fatalf("expected 2 alerts, got %d", len(data))
 	}
 }

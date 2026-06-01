@@ -472,19 +472,10 @@ func ReportAlert(c *gin.Context) {
 		input.RoomID = parseUint(c.PostForm("room_id"))
 	}
 
-	if input.ExamID == 0 || input.Type == "" || input.SeatNumber == "" {
+	if input.ExamID == 0 || input.SeatNumber == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "缺少必要参数: exam_id, type 或 seat_number",
-		})
-		return
-	}
-
-	normalizedType, ok := normalizeIncomingAlertType(input.Type)
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"error":   "type 无效",
+			"error":   "缺少必要参数: exam_id 或 seat_number",
 		})
 		return
 	}
@@ -567,7 +558,7 @@ func ReportAlert(c *gin.Context) {
 
 	alert := models.Alert{
 		ExamID:      input.ExamID,
-		Type:        normalizedType,
+		Type:        models.AlertType(input.Type),
 		SeatNumber:  input.SeatNumber,
 		X:           input.X,
 		Y:           input.Y,
@@ -576,7 +567,7 @@ func ReportAlert(c *gin.Context) {
 	}
 
 	if alert.Message == "" {
-		alert.Message = fmt.Sprintf("座位 %s 发生异常: %s", input.SeatNumber, string(normalizedType))
+		alert.Message = fmt.Sprintf("座位 %s 发生异常: %s", input.SeatNumber, input.Type)
 	}
 
 	if err := models.DB.Create(&alert).Error; err != nil {
@@ -617,23 +608,6 @@ func clearNodeOccupation(updateData map[string]any) {
 	updateData["current_exam_id"] = nil
 	updateData["current_user_id"] = nil
 	updateData["current_user_occupied_at"] = nil
-}
-
-func normalizeIncomingAlertType(raw string) (models.AlertType, bool) {
-	normalized := strings.TrimSpace(strings.ToLower(raw))
-	if normalized == "" {
-		return "", false
-	}
-
-	// 仅做格式标准化，不做语义别名映射。
-	normalized = strings.ReplaceAll(normalized, " ", "_")
-	normalized = strings.ReplaceAll(normalized, "-", "_")
-	typeValue := models.AlertType(normalized)
-	if !isValidAlertType(typeValue) {
-		return "", false
-	}
-
-	return typeValue, true
 }
 
 func mapSyncTaskStartErrorStatus(errMsg string) int {

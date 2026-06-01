@@ -67,21 +67,6 @@ func EnsureSQLiteIndexes(db *gorm.DB) error {
 		return err
 	}
 
-	// 告警类型约束：在 SQLite 用触发器实现白名单校验。
-	// 兼容既有枚举与节点 class_names 直传值。
-	if err := db.Exec("DROP TRIGGER IF EXISTS trg_alerts_type_check_insert;").Error; err != nil {
-		return err
-	}
-	if err := db.Exec("CREATE TRIGGER IF NOT EXISTS trg_alerts_type_check_insert BEFORE INSERT ON alerts FOR EACH ROW WHEN NEW.type NOT IN ('phone_cheating','look_around','whispering','leave_sheet','stand_up','other','front','head','limb','normal','sleep','stand','unknown') BEGIN SELECT RAISE(ABORT, 'invalid alert type'); END;").Error; err != nil {
-		return err
-	}
-	if err := db.Exec("DROP TRIGGER IF EXISTS trg_alerts_type_check_update;").Error; err != nil {
-		return err
-	}
-	if err := db.Exec("CREATE TRIGGER IF NOT EXISTS trg_alerts_type_check_update BEFORE UPDATE OF type ON alerts FOR EACH ROW WHEN NEW.type NOT IN ('phone_cheating','look_around','whispering','leave_sheet','stand_up','other','front','head','limb','normal','sleep','stand','unknown') BEGIN SELECT RAISE(ABORT, 'invalid alert type'); END;").Error; err != nil {
-		return err
-	}
-
 	return nil
 }
 
