@@ -1,18 +1,33 @@
 document.addEventListener('DOMContentLoaded', () => {
+    let currentPage = 1;
+    const pageSize = 20;
+
     function normalizeNode(node) {
         if (!node || typeof node !== 'object') return node;
         const normalized = { ...node };
         if (normalized.id === undefined && normalized.ID !== undefined) normalized.id = normalized.ID;
-        if (normalized.current_user_id === undefined && normalized.CurrentUserID !== undefined) normalized.current_user_id = normalized.CurrentUserID;
         if (normalized.current_exam_id === undefined && normalized.CurrentExamID !== undefined) normalized.current_exam_id = normalized.CurrentExamID;
         if (normalized.current_exam === undefined && normalized.CurrentExam !== undefined) normalized.current_exam = normalized.CurrentExam;
         if (normalized.last_heartbeat_at === undefined && normalized.LastHeartbeatAt !== undefined) normalized.last_heartbeat_at = normalized.LastHeartbeatAt;
         return normalized;
     }
 
+    function normalizeExam(exam) {
+        if (!exam || typeof exam !== 'object') return exam;
+        const normalized = { ...exam };
+        if (normalized.id === undefined && normalized.ID !== undefined) normalized.id = normalized.ID;
+        if (normalized.start_time === undefined && normalized.StartTime !== undefined) normalized.start_time = normalized.StartTime;
+        if (normalized.end_time === undefined && normalized.EndTime !== undefined) normalized.end_time = normalized.EndTime;
+        if (normalized.room === undefined && normalized.Room !== undefined) normalized.room = normalized.Room;
+        if (normalized.node === undefined && normalized.Node !== undefined) normalized.node = normalized.Node;
+        return normalized;
+    }
+
     const nodeGrid = document.getElementById('nodeGrid');
     const usernameDisplay = document.getElementById('usernameDisplay');
     const loadingOverlay = document.getElementById('loadingOverlay');
+    const examTableBody = document.getElementById('examTableBody');
+    const pagination = document.getElementById('pagination');
 
     function handleAuthFailure(response) {
         if (response.status === 401) {
@@ -47,6 +62,186 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // 加载统计数据
+    async function loadStats() {
+        try {
+            const response = await fetch('/api/proctor/exams/stats');
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
+            if (result.success && result.data) {
+                document.getElementById('totalExams').textContent = result.data.total || 0;
+                document.getElementById('ongoingExams').textContent = result.data.ongoing || 0;
+                document.getElementById('upcomingExams').textContent = result.data.upcoming || 0;
+                document.getElementById('completedExams').textContent = result.data.completed || 0;
+            }
+        } catch (e) {
+            console.error('Failed to load stats');
+        }
+    }
+
+    // 加载楼宇列表（从考试数据中提取）
+    async function loadBuildings() {
+        try {
+            // 获取所有考试，从中提取楼宇列表
+            const response = await fetch('/api/proctor/exams?page=1&page_size=1000');
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
+            const exams = (result.data || []).map(normalizeExam);
+
+            // 从考试的教室信息中提取楼宇
+            const buildings = [...new Set(
+                exams
+                    .map(e => (e.room || e.Room || {}).building || (e.room || e.Room || {}).Building)
+                    .filter(Boolean)
+            )].sort();
+
+            const select = document.getElementById('filterBuilding');
+            select.innerHTML = '<option value="">全部楼宇</option>' +
+                buildings.map(b => `<option value="${b}">${b}</option>`).join('');
+        } catch (e) {
+            console.error('Failed to load buildings', e);
+        }
+    }
+
+    // 加载考试列表
+    window.loadExams = async function(page = 1) {
+        currentPage = page;
+        const building = document.getElementById('filterBuilding').value;
+        const date = document.getElementById('filterDate').value;
+        const status = document.getElementById('filterStatus').value;
+
+        const params = new URLSearchParams({
+            page: currentPage,
+            page_size: pageSize
+        });
+        if (building) params.append('building', building);
+        if (date) params.append('date', date);
+        if (status) params.append('status', status);
+
+        try {
+            examTableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 2rem;"><i class="fa-solid fa-circle-notch fa-spin"></i> 正在加载...</td></tr>';
+
+            const response = await fetch(`/api/proctor/exams?${params}`);
+            if (handleAuthFailure(response)) return;
+            const result = await parseJsonSafe(response);
+
+            if (result.success) {
+                const exams = (result.data || []).map(normalizeExam);
+                renderExams(exams);
+                renderPagination(result.pagination);
+            }
+        } catch (e) {
+            console.error('Failed to load exams', e);
+            examTableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 2rem; color: #ef4444;">加载失败，请刷新重试</td></tr>';
+        }
+    }
+
+    function renderExams(exams) {
+        if (!exams || exams.length === 0) {
+            examTableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 2rem; color: #9ca3af;">暂无考试数据</td></tr>';
+            return;
+        }
+
+        examTableBody.innerHTML = exams.map(exam => {
+            const room = exam.room || exam.Room || {};
+            const node = exam.node || exam.Node || {};
+            const now = new Date();
+            const startTime = new Date(exam.start_time || exam.StartTime);
+            const endTime = exam.end_time || exam.EndTime;
+
+            let statusBadge = '';
+            let statusText = '';
+            if (endTime) {
+                statusBadge = 'status-completed';
+                statusText = '已完成';
+            } else if (startTime <= now) {
+                statusBadge = 'status-ongoing';
+                statusText = '进行中';
+            } else {
+                statusBadge = 'status-upcoming';
+                statusText = '即将开始';
+            }
+
+            const durationMinutes = Math.floor((exam.duration_seconds || exam.DurationSeconds || 0) / 60);
+
+            return `
+                <tr>
+                    <td><strong>${exam.subject || exam.Subject || '-'}</strong></td>
+                    <td>${room.building || room.Building || '-'}</td>
+                    <td>${room.name || room.Name || '-'}</td>
+                    <td>${formatDateTime(exam.start_time || exam.StartTime)}</td>
+                    <td>${durationMinutes} 分钟</td>
+                    <td><span class="status-badge ${statusBadge}">${statusText}</span></td>
+                    <td>${node.name || node.Name || '未分配'}</td>
+                    <td>
+                        ${node.id ? `<button onclick="enterNode(${node.id})" style="padding: 0.25rem 0.75rem; background: var(--primary-color); color: white; border: none; border-radius: 0.25rem; cursor: pointer; font-size: 0.75rem;">
+                            <i class="fa-solid fa-right-to-bracket"></i> 进入
+                        </button>` : '<span style="color: #9ca3af; font-size: 0.75rem;">-</span>'}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function renderPagination(pag) {
+        if (!pag || pag.total === 0) {
+            pagination.innerHTML = '';
+            return;
+        }
+
+        const totalPage = pag.total_page || 1;
+        const current = pag.page || 1;
+
+        let html = '';
+
+        // 上一页
+        html += `<button onclick="loadExams(${current - 1})" ${current <= 1 ? 'disabled' : ''}>
+            <i class="fa-solid fa-chevron-left"></i> 上一页
+        </button>`;
+
+        // 页码
+        const maxButtons = 5;
+        let startPage = Math.max(1, current - Math.floor(maxButtons / 2));
+        let endPage = Math.min(totalPage, startPage + maxButtons - 1);
+
+        if (endPage - startPage < maxButtons - 1) {
+            startPage = Math.max(1, endPage - maxButtons + 1);
+        }
+
+        for (let i = startPage; i <= endPage; i++) {
+            html += `<button onclick="loadExams(${i})" ${i === current ? 'class="active"' : ''}>${i}</button>`;
+        }
+
+        // 下一页
+        html += `<button onclick="loadExams(${current + 1})" ${current >= totalPage ? 'disabled' : ''}>
+            下一页 <i class="fa-solid fa-chevron-right"></i>
+        </button>`;
+
+        html += `<span>共 ${pag.total} 条记录</span>`;
+
+        pagination.innerHTML = html;
+    }
+
+    window.clearFilters = function() {
+        document.getElementById('filterBuilding').value = '';
+        document.getElementById('filterDate').value = '';
+        document.getElementById('filterStatus').value = '';
+        loadExams(1);
+    }
+
+    function formatDateTime(timeStr) {
+        if (!timeStr) return '-';
+        const date = new Date(timeStr);
+        if (Number.isNaN(date.getTime())) return '-';
+        return date.toLocaleString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
     window.logout = async function () {
         if (confirm("确定要退出登录吗？")) {
             try {
@@ -66,7 +261,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch('/api/proctor/nodes');
             if (handleAuthFailure(response)) return;
             const result = await parseJsonSafe(response);
-            // 确定使用标准返回格式 { success: true, data: [] }
             const nodes = (result.data || []).map(normalizeNode);
             renderNodes(nodes);
         } catch (error) {
@@ -98,8 +292,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? [room && room.building, room && room.name].filter(Boolean).join(' ') || '未知地点'
                 : '暂无当前考试';
             const examSubject = currentExam ? (currentExam.subject || '未填写科目') : '暂无当前考试';
-            const examTime = currentExam ? formatExamTime(currentExam.start_time) : '暂无当前考试';
-            const isOccupied = !!node.current_user_id || !!node.current_exam_id || node.status === 'busy';
+            const examTime = currentExam ? formatDateTime(currentExam.start_time) : '暂无当前考试';
+            const isOccupied = !!node.current_exam_id || node.status === 'busy';
             const isUnavailable = node.status === 'offline' || node.status === 'error';
             const statusClass = `status-${node.status}`;
             let statusText = isOccupied ? '已占用' : '未占用';
@@ -142,7 +336,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             <span>考试时间: ${examTime}</span>
                         </div>
                     </div>
-                    <button class="enter-btn ${isOccupied ? 'resume' : ''}" 
+                    <button class="enter-btn ${isOccupied ? 'resume' : ''}"
                             ${buttonAttrs}>
                         <i class="fa-solid ${actionIcon}"></i>
                         ${actionText}
@@ -161,11 +355,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (handleAuthFailure(response)) return;
             const result = await parseJsonSafe(response);
             if (result.success && result.jump_url) {
-                // 跳转到具体的监考节点页面
                 window.location.href = result.jump_url;
             } else {
                 alert(result.error || '无法进入该节点，请稍后重试。');
-                fetchNodes(); // 刷新列表
+                fetchNodes();
             }
         } catch (error) {
             alert('请求出错，请重试');
@@ -174,21 +367,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-    function formatExamTime(timeStr) {
-        if (!timeStr) return '未知';
-        const date = new Date(timeStr);
-        if (Number.isNaN(date.getTime())) return '无效时间';
-        if (date.getUTCFullYear() <= 1971) return '未知';
-        return date.toLocaleString('zh-CN', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    }
-
-    // --- 修改密码逻辑 ---
+    // 修改密码逻辑
     const passwordModal = document.getElementById('passwordModal');
 
     window.openPasswordModal = function () {
@@ -225,7 +404,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             const result = await parseJsonSafe(response);
 
-            // 改密接口会用 401 表示旧密码错误，不能按未登录处理直接跳转。
             if (response.status === 401 && result && result.error === '旧密码错误') {
                 alert(result.error);
                 return;
@@ -245,15 +423,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initial load
     fetchUserInfo();
+    loadStats();
+    loadBuildings();
+    loadExams(1);
     fetchNodes();
 
-    // 页面重新可见时立即刷新，避免后台标签页恢复后状态滞后。
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) {
-            fetchNodes();
-        }
-    });
-
-    // 缩短轮询间隔，降低状态变化感知延迟。
-    setInterval(fetchNodes, 3000);
+    // 自动刷新（静默）
+    setInterval(() => {
+        loadStats();
+        loadExams(currentPage);
+    }, 30000); // 每30秒刷新一次
 });

@@ -28,18 +28,97 @@
     </nav>
 
     <div class="container">
-        <header class="header">
-            <h1>选择监考节点</h1>
-            <p>请从下方选择对应的监考节点进入工作状态。</p>
-        </header>
-
-        <div id="nodeGrid" class="node-grid">
-            <!-- 节点将通过 JavaScript 动态加载 -->
-            <div class="empty-state">
-                <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2rem; color: var(--primary-color);"></i>
-                <p style="margin-top: 1rem;">正在加载节点列表...</p>
+        <!-- 统计卡片 -->
+        <div class="stats-container">
+            <div class="stat-card">
+                <div class="stat-label">总考试数</div>
+                <div class="stat-value" id="totalExams">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">进行中</div>
+                <div class="stat-value" style="color: #f59e0b;" id="ongoingExams">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">即将开始</div>
+                <div class="stat-value" style="color: #06b6d4;" id="upcomingExams">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">已完成</div>
+                <div class="stat-value" style="color: #22c55e;" id="completedExams">0</div>
             </div>
         </div>
+
+        <!-- 筛选器 -->
+        <div class="filter-container">
+            <div class="filter-group">
+                <label>楼宇</label>
+                <select id="filterBuilding" onchange="loadExams()">
+                    <option value="">全部楼宇</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>日期</label>
+                <input type="date" id="filterDate" onchange="loadExams()">
+            </div>
+            <div class="filter-group">
+                <label>状态</label>
+                <select id="filterStatus" onchange="loadExams()">
+                    <option value="">全部</option>
+                    <option value="upcoming">即将开始</option>
+                    <option value="ongoing">进行中</option>
+                    <option value="completed">已完成</option>
+                </select>
+            </div>
+            <button onclick="clearFilters()" style="background: #6b7280;">
+                <i class="fa-solid fa-xmark"></i> 清除筛选
+            </button>
+        </div>
+
+        <!-- 考试列表 -->
+        <header class="header">
+            <h1>我的考试</h1>
+            <p>下方显示您需要监考的考试列表</p>
+        </header>
+
+        <div class="exam-table-container">
+            <table class="exam-table">
+                <thead>
+                    <tr>
+                        <th>考试科目</th>
+                        <th>楼宇</th>
+                        <th>教室</th>
+                        <th>开始时间</th>
+                        <th>时长</th>
+                        <th>状态</th>
+                        <th>节点</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="examTableBody">
+                    <tr>
+                        <td colspan="8" style="text-align: center; padding: 2rem; color: #9ca3af;">
+                            <i class="fa-solid fa-circle-notch fa-spin"></i> 正在加载...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 分页 -->
+        <div id="pagination" class="pagination"></div>
+
+        <!-- 可用节点（原有功能，折叠显示） -->
+        <details style="margin-top: 2rem;">
+            <summary style="cursor: pointer; font-size: 1.1rem; font-weight: 600; padding: 1rem; background: #f3f4f6; border-radius: 0.5rem;">
+                <i class="fa-solid fa-server"></i> 查看所有可用节点
+            </summary>
+            <div id="nodeGrid" class="node-grid" style="margin-top: 1rem;">
+                <div class="empty-state">
+                    <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2rem; color: var(--primary-color);"></i>
+                    <p style="margin-top: 1rem;">正在加载节点列表...</p>
+                </div>
+            </div>
+        </details>
     </div>
 
     <div id="loadingOverlay" class="loading-overlay">
@@ -98,7 +177,7 @@
         }
     </style>
 
-    <script src="/js/proctor.js?v=1.0.1"></script>
+    <script src="/js/proctor.js?v=1.0.2"></script>
 </body>
 
 </html>
