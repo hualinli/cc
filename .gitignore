@@ -10,5 +10,4 @@ cc
 .python-version
 pyproject.toml
 uv.lock
-node_simulator/
-scripts/
+__pycache__/
