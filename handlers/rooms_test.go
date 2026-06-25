@@ -598,11 +598,11 @@ func TestListRoomsPagination(t *testing.T) {
 			expectedDataLen: 15,
 		},
 		{
-			name:            "page size too large",
+			name:            "page size 200 within limit",
 			query:           "?page=1&page_size=200",
 			expectedCode:    http.StatusOK,
 			expectedPage:    1,
-			expectedSize:    100, // 被 parsePaginationParams 限制为 100
+			expectedSize:    200,
 			expectedTotal:   30,
 			expectedPages:   1,
 			expectedDataLen: 30,

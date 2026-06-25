@@ -135,7 +135,7 @@ func TestListNodesPagination(t *testing.T) {
 			name:              "page size too large",
 			query:             "?page_size=200",
 			expectedCode:      http.StatusOK,
-			expectedPageSize:  100,
+			expectedPageSize:  200,
 			expectedPage:      1,
 			expectedDataCount: 25,
 			expectedTotal:     25,

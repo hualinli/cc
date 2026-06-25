@@ -530,7 +530,20 @@ async function loadExamFormOptions() {
         const nodes = (nodesResult.data || []).map(normalizeEntity);
 
         roomSelect.innerHTML = rooms.length
-            ? rooms.map(r => `<option value="${r.id}">${escapeHtml(r.building)} / ${escapeHtml(r.name)}</option>`).join('')
+            ? (() => {
+                // 按楼栋分组
+                const groups = {};
+                rooms.forEach(r => {
+                    const bld = r.building || '未分类';
+                    if (!groups[bld]) groups[bld] = [];
+                    groups[bld].push(r);
+                });
+                return '<option value="">请选择教室</option>' + Object.keys(groups).sort().map(bld =>
+                    `<optgroup label="${escapeHtml(bld)}">` +
+                    groups[bld].map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('') +
+                    `</optgroup>`
+                ).join('');
+            })()
             : '<option value="">暂无教室</option>';
 
         userSelect.innerHTML = users.length
