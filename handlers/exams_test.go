@@ -232,8 +232,8 @@ func TestDeleteExam_DeletesRelatedAlerts(t *testing.T) {
 	if err := models.DB.Create(&exam).Error; err != nil {
 		t.Fatalf("failed to seed exam: %v", err)
 	}
-	alert1 := models.Alert{ExamID: exam.ID, Type: models.AlertTypePhoneCheating, SeatNumber: "A1", Message: "issue1"}
-	alert2 := models.Alert{ExamID: exam.ID, Type: models.AlertTypeLookAround, SeatNumber: "A2", Message: "issue2"}
+	alert1 := models.Alert{ExamID: exam.ID, Type: "phone_cheating", SeatNumber: "A1", Message: "issue1"}
+	alert2 := models.Alert{ExamID: exam.ID, Type: "look_around", SeatNumber: "A2", Message: "issue2"}
 	if err := models.DB.Create(&alert1).Error; err != nil {
 		t.Fatalf("failed to seed alert1: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestGetExams_Success(t *testing.T) {
 	if err := models.DB.Create(&exam).Error; err != nil {
 		t.Fatalf("failed to seed exam: %v", err)
 	}
-	alert := models.Alert{ExamID: exam.ID, Type: models.AlertTypePhoneCheating, SeatNumber: "A1", Message: "issue"}
+	alert := models.Alert{ExamID: exam.ID, Type: "phone_cheating", SeatNumber: "A1", Message: "issue"}
 	if err := models.DB.Create(&alert).Error; err != nil {
 		t.Fatalf("failed to seed alert: %v", err)
 	}
@@ -568,9 +568,9 @@ func TestGetExamStats_WithRunningExams(t *testing.T) {
 	if err := models.DB.Create(&exam3).Error; err != nil {
 		t.Fatalf("failed to seed exam3: %v", err)
 	}
-	alert1 := models.Alert{ExamID: exam1.ID, Type: models.AlertTypePhoneCheating, SeatNumber: "A1", Message: "issue1"}
-	alert2 := models.Alert{ExamID: exam1.ID, Type: models.AlertTypeLookAround, SeatNumber: "A2", Message: "issue2"}
-	alert3 := models.Alert{ExamID: exam2.ID, Type: models.AlertTypeOther, SeatNumber: "B1", Message: "issue3"}
+	alert1 := models.Alert{ExamID: exam1.ID, Type: "phone_cheating", SeatNumber: "A1", Message: "issue1"}
+	alert2 := models.Alert{ExamID: exam1.ID, Type: "look_around", SeatNumber: "A2", Message: "issue2"}
+	alert3 := models.Alert{ExamID: exam2.ID, Type: "other", SeatNumber: "B1", Message: "issue3"}
 	if err := models.DB.Create(&alert1).Error; err != nil {
 		t.Fatalf("failed to seed alert1: %v", err)
 	}
@@ -584,7 +584,7 @@ func TestGetExamStats_WithRunningExams(t *testing.T) {
 	r := setupExamsRouter()
 	w := performExamJSONRequest(t, r, http.MethodGet, "/exams/stats", "")
 	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
+		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
 	}
 	resp := decodeExamResp(t, w)
 	data := resp["data"].(map[string]any)
