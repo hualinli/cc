@@ -236,3 +236,33 @@ func TestLogoutHandler_ReturnsLoginRedirect(t *testing.T) {
 		t.Fatal("expected session cookie to be returned by logout")
 	}
 }
+
+func TestLoginPostHandler_DisabledUserReturnsForbidden(t *testing.T) {
+	cleanup := setupAuthHandlerTestDB(t)
+	defer cleanup()
+
+	user := seedAuthUser(t, "disabled-user", models.Proctor)
+	models.DB.Model(&user).Update("status", models.UserStatusDisabled)
+
+	r := setupAuthRouter()
+	form := url.Values{
+		"username": {"disabled-user"},
+		"password": {"secret-pass"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["error"] != "账户已被禁用，请联系管理员" {
+		t.Fatalf("expected disabled message, got %v", resp["error"])
+	}
+}

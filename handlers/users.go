@@ -115,9 +115,21 @@ func GetUser(c *gin.Context) {
 }
 
 func ListUsers(c *gin.Context) {
-	var users []models.User
+	// 分页参数
+	page, pageSize := parsePaginationParams(c)
+	offset := (page - 1) * pageSize
 
-	if err := models.DB.Find(&users).Error; err != nil {
+	var total int64
+	if err := models.DB.Model(&models.User{}).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "查询用户总数失败",
+		})
+		return
+	}
+
+	var users []models.User
+	if err := models.DB.Offset(offset).Limit(pageSize).Find(&users).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "获取用户列表失败",
@@ -134,23 +146,153 @@ func ListUsers(c *gin.Context) {
 			}
 			return result
 		}(),
+		"pagination": gin.H{
+			"page":       page,
+			"page_size":  pageSize,
+			"total":      total,
+			"total_page": (total + int64(pageSize) - 1) / int64(pageSize),
+		},
 	})
 }
 
 func DeleteUser(c *gin.Context) {
-	result := models.DB.Unscoped().Where("id = ? AND username <> ?", c.Param("id"), "admin").Delete(&models.User{})
-	if result.Error != nil {
+	userID := c.Param("id")
+
+	// 检查是否是 admin 用户
+	var user models.User
+	if err := models.DB.First(&user, userID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   "用户不存在",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   "删除用户失败",
+			"error":   "查询用户失败",
 		})
 		return
 	}
 
-	if result.RowsAffected == 0 {
+	if user.Username == "admin" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "用户不存在或无法删除",
+			"error":   "无法禁用管理员账户",
+		})
+		return
+	}
+
+	// 检查是否有正在进行的考试
+	var runningExamCount int64
+	models.DB.Model(&models.Exam{}).
+		Where("user_id = ? AND end_time IS NULL", userID).
+		Count(&runningExamCount)
+
+	if runningExamCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   "该用户有正在进行的考试，无法禁用",
+		})
+		return
+	}
+
+	// 禁用用户
+	result := models.DB.Model(&user).Update("status", models.UserStatusDisabled)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "禁用用户失败",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+	})
+}
+
+// ForceDeleteUser 强制级联删除用户及其所有关联数据
+// 危险操作：会删除用户的所有考试记录、告警等数据
+func ForceDeleteUser(c *gin.Context) {
+	userID := c.Param("id")
+
+	// 检查是否是 admin 用户
+	var user models.User
+	if err := models.DB.First(&user, userID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"error":   "用户不存在",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "查询用户失败",
+		})
+		return
+	}
+
+	if user.Username == "admin" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "无法删除管理员账户",
+		})
+		return
+	}
+
+	// 检查是否有正在进行的考试
+	var runningExamCount int64
+	models.DB.Model(&models.Exam{}).
+		Where("user_id = ? AND end_time IS NULL", userID).
+		Count(&runningExamCount)
+
+	if runningExamCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   "该用户有正在进行的考试，无法删除",
+		})
+		return
+	}
+
+	// 级联删除
+	err := models.DB.Transaction(func(tx *gorm.DB) error {
+		// 1. 查询用户的所有考试 ID
+		var examIDs []uint
+		tx.Model(&models.Exam{}).Where("user_id = ?", userID).Pluck("id", &examIDs)
+
+		if len(examIDs) > 0 {
+			// 2. 删除这些考试的所有告警
+			if err := tx.Where("exam_id IN ?", examIDs).Delete(&models.Alert{}).Error; err != nil {
+				return err
+			}
+
+			// 3. 清空节点的 current_exam_id（如果指向这些考试）
+			if err := tx.Model(&models.Node{}).
+				Where("current_exam_id IN ?", examIDs).
+				Update("current_exam_id", nil).Error; err != nil {
+				return err
+			}
+
+			// 4. 删除所有考试
+			if err := tx.Where("user_id = ?", userID).Delete(&models.Exam{}).Error; err != nil {
+				return err
+			}
+		}
+
+		// 5. 删除用户
+		if err := tx.Delete(&user).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "删除用户失败: " + err.Error(),
 		})
 		return
 	}

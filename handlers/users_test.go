@@ -3,11 +3,13 @@ package handlers
 import (
 	"bytes"
 	"cc/models"
+	"fmt"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -418,15 +420,15 @@ func TestDeleteUser(t *testing.T) {
 			},
 			targetID:             "1",
 			expectedCode:         http.StatusBadRequest,
-			expectedBodyContains: "用户不存在或无法删除",
+			expectedBodyContains: "无法禁用管理员账户",
 			expectSuccess:        false,
 			expectDeleted:        false,
 		},
 		{
 			name:                 "user not found",
 			targetID:             "999",
-			expectedCode:         http.StatusBadRequest,
-			expectedBodyContains: "用户不存在或无法删除",
+			expectedCode:         http.StatusNotFound,
+			expectedBodyContains: "用户不存在",
 			expectSuccess:        false,
 			expectDeleted:        false,
 		},
@@ -469,16 +471,15 @@ func TestDeleteUser(t *testing.T) {
 			}
 
 			if tc.seedUser != nil {
-				var normalQuery models.User
-				err := models.DB.Where("id = ?", 1).First(&normalQuery).Error
+				var user models.User
+				err := models.DB.Where("id = ?", 1).First(&user).Error
 				if tc.expectDeleted {
-					if err == nil {
-						t.Fatalf("expected user to be deleted")
+					// Soft-delete: user should still exist but with status=disabled
+					if err != nil {
+						t.Fatalf("expected user to exist after soft-delete, got err=%v", err)
 					}
-
-					var deletedUser models.User
-					if err := models.DB.Unscoped().Where("id = ?", 1).First(&deletedUser).Error; err == nil {
-						t.Fatalf("expected hard delete, but user still exists in unscoped query")
+					if user.Status != models.UserStatusDisabled {
+						t.Fatalf("expected user status disabled, got %s", user.Status)
 					}
 				} else {
 					if err != nil {
@@ -784,6 +785,295 @@ func TestChangePassword(t *testing.T) {
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("failed to decode response: %v", err)
+			}
+			if resp.Success != tc.expectSuccess {
+				t.Fatalf("expected success=%v, got %v", tc.expectSuccess, resp.Success)
+			}
+
+			if tc.verify != nil {
+				tc.verify(t)
+			}
+		})
+	}
+}
+
+// TestListUsersPagination 测试用户列表分页
+func TestListUsersPagination(t *testing.T) {
+	cleanup := setupUsersHandlerTestDB(t)
+	defer cleanup()
+
+	// 创建 25 个用户用于测试分页
+	for i := 1; i <= 25; i++ {
+		username := fmt.Sprintf("user%02d", i)
+		hash, err := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
+		if err != nil {
+			t.Fatalf("failed to hash password: %v", err)
+		}
+		user := models.User{Username: username, Password: string(hash), Role: models.Proctor}
+		if err := models.DB.Create(&user).Error; err != nil {
+			t.Fatalf("failed to create user: %v", err)
+		}
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/users", ListUsers)
+
+	testCases := []struct {
+		name            string
+		query           string
+		expectedCode    int
+		expectedPage    int
+		expectedSize    int
+		expectedTotal   int64
+		expectedPages   int64
+		expectedDataLen int
+	}{
+		{
+			name:            "default pagination",
+			query:           "",
+			expectedCode:    http.StatusOK,
+			expectedPage:    1,
+			expectedSize:    20,
+			expectedTotal:   25,
+			expectedPages:   2,
+			expectedDataLen: 20,
+		},
+		{
+			name:            "page 2",
+			query:           "?page=2&page_size=20",
+			expectedCode:    http.StatusOK,
+			expectedPage:    2,
+			expectedSize:    20,
+			expectedTotal:   25,
+			expectedPages:   2,
+			expectedDataLen: 5,
+		},
+		{
+			name:            "custom page size",
+			query:           "?page=1&page_size=10",
+			expectedCode:    http.StatusOK,
+			expectedPage:    1,
+			expectedSize:    10,
+			expectedTotal:   25,
+			expectedPages:   3,
+			expectedDataLen: 10,
+		},
+		{
+			name:            "page size too large",
+			query:           "?page=1&page_size=200",
+			expectedCode:    http.StatusOK,
+			expectedPage:    1,
+			expectedSize:    100, // 被 parsePaginationParams 限制为 100
+			expectedTotal:   25,
+			expectedPages:   1,
+			expectedDataLen: 25,
+		},
+		{
+			name:            "invalid page",
+			query:           "?page=0",
+			expectedCode:    http.StatusOK,
+			expectedPage:    1, // 应该被修正为 1
+			expectedSize:    20,
+			expectedTotal:   25,
+			expectedPages:   2,
+			expectedDataLen: 20,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/users"+tc.query, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != tc.expectedCode {
+				t.Fatalf("expected status %d, got %d", tc.expectedCode, w.Code)
+			}
+
+			var resp struct {
+				Success    bool          `json:"success"`
+				Data       []interface{} `json:"data"`
+				Pagination struct {
+					Page      int   `json:"page"`
+					PageSize  int   `json:"page_size"`
+					Total     int64 `json:"total"`
+					TotalPage int64 `json:"total_page"`
+				} `json:"pagination"`
+			}
+
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to unmarshal response: %v", err)
+			}
+
+			if !resp.Success {
+				t.Fatalf("expected success=true, got false")
+			}
+
+			if len(resp.Data) != tc.expectedDataLen {
+				t.Fatalf("expected %d users, got %d", tc.expectedDataLen, len(resp.Data))
+			}
+
+			if resp.Pagination.Page != tc.expectedPage {
+				t.Fatalf("expected page %d, got %d", tc.expectedPage, resp.Pagination.Page)
+			}
+
+			if resp.Pagination.PageSize != tc.expectedSize {
+				t.Fatalf("expected page_size %d, got %d", tc.expectedSize, resp.Pagination.PageSize)
+			}
+
+			if resp.Pagination.Total != tc.expectedTotal {
+				t.Fatalf("expected total %d, got %d", tc.expectedTotal, resp.Pagination.Total)
+			}
+
+			if resp.Pagination.TotalPage != tc.expectedPages {
+				t.Fatalf("expected total_page %d, got %d", tc.expectedPages, resp.Pagination.TotalPage)
+			}
+		})
+	}
+}
+
+func setupForceDeleteTestDB(t *testing.T) func() {
+	t.Helper()
+	oldDB := models.DB
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to connect test db: %v", err)
+	}
+	if err := db.AutoMigrate(&models.User{}, &models.Exam{}, &models.Node{}, &models.Room{}, &models.Alert{}); err != nil {
+		t.Fatalf("failed to migrate test db: %v", err)
+	}
+	models.DB = db
+	return func() {
+		_ = db.Migrator().DropTable(&models.Alert{}, &models.Exam{}, &models.Node{}, &models.Room{}, &models.User{})
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+		models.DB = oldDB
+	}
+}
+
+func performForceDeleteUserRequest(t *testing.T, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.DELETE("/users/:id/force", ForceDeleteUser)
+	req := httptest.NewRequest(http.MethodDelete, "/users/"+id+"/force", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestForceDeleteUser(t *testing.T) {
+	testCases := []struct {
+		name                 string
+		seedUser             *models.User
+		targetID             string
+		expectedCode         int
+		expectedBodyContains string
+		expectSuccess        bool
+		setup                func(t *testing.T)
+		verify               func(t *testing.T)
+	}{
+		{
+			name: "force delete user with no exams",
+			seedUser: &models.User{
+				Username: "alice",
+				Role:     models.Proctor,
+			},
+			targetID:             "1",
+			expectedCode:         http.StatusOK,
+			expectedBodyContains: `"success":true`,
+			expectSuccess:        true,
+			verify: func(t *testing.T) {
+				var user models.User
+				if err := models.DB.Where("id = ?", 1).First(&user).Error; err == nil {
+					t.Fatal("expected user to be hard deleted")
+				}
+			},
+		},
+		{
+			name: "cannot force delete admin",
+			seedUser: &models.User{
+				Username: "admin",
+				Role:     models.Admin,
+			},
+			targetID:             "1",
+			expectedCode:         http.StatusBadRequest,
+			expectedBodyContains: "无法删除管理员账户",
+			expectSuccess:        false,
+		},
+		{
+			name:                 "user not found",
+			targetID:             "999",
+			expectedCode:         http.StatusNotFound,
+			expectedBodyContains: "用户不存在",
+			expectSuccess:        false,
+		},
+		{
+			name: "cannot delete user with running exam",
+			seedUser: &models.User{
+				Username: "bob",
+				Role:     models.Proctor,
+			},
+			targetID:             "1",
+			expectedCode:         http.StatusConflict,
+			expectedBodyContains: "该用户有正在进行的考试，无法删除",
+			expectSuccess:        false,
+			setup: func(t *testing.T) {
+				r := models.Room{Name: "Room1", Building: "B1", RTSPUrl: "rtsp://x"}
+				if err := models.DB.Create(&r).Error; err != nil {
+					t.Fatalf("seed room: %v", err)
+				}
+				e := models.Exam{
+					Name:           "running-exam",
+					Subject:        "math",
+					RoomID:         r.ID,
+					UserID:         1,
+					StartTime:      time.Now(),
+					ScheduleStatus: models.ExamScheduleRunning,
+				}
+				if err := models.DB.Create(&e).Error; err != nil {
+					t.Fatalf("seed exam: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cleanup := setupForceDeleteTestDB(t)
+			defer cleanup()
+
+			if tc.seedUser != nil {
+				hash, err := bcrypt.GenerateFromPassword([]byte("pass"), bcrypt.DefaultCost)
+				if err != nil {
+					t.Fatalf("hash: %v", err)
+				}
+				u := *tc.seedUser
+				u.Password = string(hash)
+				if err := models.DB.Create(&u).Error; err != nil {
+					t.Fatalf("seed user: %v", err)
+				}
+			}
+
+			if tc.setup != nil {
+				tc.setup(t)
+			}
+
+			w := performForceDeleteUserRequest(t, tc.targetID)
+			if w.Code != tc.expectedCode {
+				t.Fatalf("expected status %d, got %d, body=%s", tc.expectedCode, w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tc.expectedBodyContains) {
+				t.Fatalf("expected body to contain %q, got body=%s", tc.expectedBodyContains, w.Body.String())
+			}
+
+			var resp struct {
+				Success bool `json:"success"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode: %v", err)
 			}
 			if resp.Success != tc.expectSuccess {
 				t.Fatalf("expected success=%v, got %v", tc.expectSuccess, resp.Success)
