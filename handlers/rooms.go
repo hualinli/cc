@@ -286,11 +286,23 @@ func SyncRooms(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取教室列表失败"})
 		return
 	}
-	// 全量sync，不区分是否online，所以可能会报错，但不影响后续流程
+	// 全量同步，跳过地址无效的节点（未上线或等待心跳）
 	var nodes []models.Node
 	if err := models.DB.Find(&nodes).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取节点列表失败"})
 		return
+	}
+
+	// 过滤掉地址无效的节点
+	var skippedNodes []string
+	var validNodes []models.Node
+	for _, n := range nodes {
+		addr := strings.TrimSpace(n.Address)
+		if addr == "" || addr == "waiting_for_heartbeat" {
+			skippedNodes = append(skippedNodes, n.Name)
+			continue
+		}
+		validNodes = append(validNodes, n)
 	}
 
 	// 准备同步数据
@@ -329,7 +341,7 @@ func SyncRooms(c *gin.Context) {
 	}
 
 	var failures []string
-	for _, node := range nodes {
+	for _, node := range validNodes {
 		nodeURL, err := buildNodeClassroomsURL(node.Address, node.Token)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("节点 %s (%s): %s", node.Name, node.Address, err.Error()))
@@ -360,19 +372,24 @@ func SyncRooms(c *gin.Context) {
 		}
 	}
 
-	if len(failures) > 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "部分节点同步失败",
-			"errors":  failures,
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"success": true,
 		"message": "所有节点同步成功",
-	})
+	}
+	if len(skippedNodes) > 0 {
+		resp["skipped_nodes"] = skippedNodes
+		resp["message"] = fmt.Sprintf("所有在线节点同步成功（跳过 %d 个地址无效节点）", len(skippedNodes))
+	}
+	if len(failures) > 0 {
+		resp["success"] = false
+		resp["errors"] = failures
+		if len(skippedNodes) > 0 {
+			resp["message"] = fmt.Sprintf("部分节点同步失败（跳过 %d 个地址无效节点，%d 个节点失败）", len(skippedNodes), len(failures))
+		} else {
+			resp["message"] = "部分节点同步失败"
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func buildNodeClassroomsURL(address string, token string) (string, error) {

@@ -303,11 +303,19 @@ func notifyNodeStartExam(node models.Node, exam models.Exam) error {
 		return errors.New("node token not configured")
 	}
 
+	// 获取教室信息（含 RTSP 地址）
+	var room models.Room
+	rtspURL := ""
+	if err := models.DB.First(&room, exam.RoomID).Error; err == nil {
+		rtspURL = room.RTSPUrl
+	}
+
 	body := map[string]any{
 		"subject":      exam.Subject,
 		"duration":     strconv.Itoa((exam.DurationSeconds + 59) / 60),
 		"classroom_id": exam.RoomID,
 		"exam_id":      exam.ID,
+		"rtsp_url":     rtspURL,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

@@ -1872,9 +1872,12 @@ async function syncRooms() {
         const { result, aborted } = await requestJSON('/api/sync/rooms', { method: 'POST' });
         if (aborted || !result) return;
         if (result.success) {
-            alert('教室信息同步指令已发送');
+            const extra = result.skipped_nodes?.length ? `（跳过 ${result.skipped_nodes.length} 个未上线节点）` : '';
+            alert(result.message || '教室信息同步成功' + extra);
         } else {
-            alert('同步失败: ' + (result.error || result.message));
+            const errorList = result.errors?.length ? '\n\n失败详情:\n' + result.errors.join('\n') : '';
+            const skipped = result.skipped_nodes?.length ? `\n跳过 ${result.skipped_nodes.length} 个未上线节点` : '';
+            alert((result.message || '同步失败') + skipped + errorList);
         }
     } catch (err) {
         alert('网络请求出错');
