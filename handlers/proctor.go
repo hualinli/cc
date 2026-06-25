@@ -86,9 +86,15 @@ func ListProctorExams(c *gin.Context) {
 		return
 	}
 
+	// 转换为 payload，确保关联数据（Room/Node）序列化到 JSON
+	result := make([]examPayload, 0, len(exams))
+	for _, exam := range exams {
+		result = append(result, toExamPayload(exam))
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    exams,
+		"data":    result,
 		"pagination": gin.H{
 			"page":       page,
 			"page_size":  pageSize,
