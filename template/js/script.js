@@ -512,10 +512,11 @@ async function loadExamFormOptions() {
     nodeSelect.innerHTML = '<option value="">加载中...</option>';
 
     try {
+        // 使用大 page_size 获取全部数据（不受默认分页20条限制），用于表单下拉选项
         const [roomsReq, usersReq, nodesReq] = await Promise.all([
-            requestJSON('/api/rooms'),
-            requestJSON('/api/users'),
-            requestJSON('/api/nodes')
+            requestJSON('/api/rooms?page_size=1000'),
+            requestJSON('/api/users?page_size=1000'),
+            requestJSON('/api/nodes?page_size=1000')
         ]);
 
         if (roomsReq.aborted || usersReq.aborted || nodesReq.aborted) return;
@@ -788,7 +789,7 @@ async function deleteAlert(alertId, examId) {
 async function populateHistoryFilters() {
     try {
         // 1. 抓取所有教室数据
-        const { result: roomsResult, aborted } = await requestJSON('/api/rooms');
+        const { result: roomsResult, aborted } = await requestJSON('/api/rooms?page_size=1000');
         if (aborted || !roomsResult) return;
         allHistoryRooms = (roomsResult.data || []).map(normalizeEntity);
 
