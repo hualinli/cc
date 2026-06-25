@@ -20,6 +20,7 @@ func CreateRoom(c *gin.Context) {
 		Name     string `json:"name" binding:"required"`
 		Building string `json:"building" binding:"required"`
 		Type     string `json:"type"`
+		Remark   string `json:"remark"`
 		RTSPUrl  string `json:"rtsp_url" binding:"required"`
 	}
 
@@ -35,6 +36,7 @@ func CreateRoom(c *gin.Context) {
 	name := strings.TrimSpace(input.Name)
 	building := strings.TrimSpace(input.Building)
 	roomType := strings.TrimSpace(input.Type)
+	remark := strings.TrimSpace(input.Remark)
 	rtspURL := strings.TrimSpace(input.RTSPUrl)
 	if name == "" || building == "" || rtspURL == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -52,6 +54,9 @@ func CreateRoom(c *gin.Context) {
 	if roomType != "" {
 		room.Type = &roomType
 	}
+	if remark != "" {
+		room.Remark = &remark
+	}
 
 	if err := models.DB.Create(&room).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -68,18 +73,24 @@ func CreateRoom(c *gin.Context) {
 }
 
 func DeleteRoom(c *gin.Context) {
-	result := models.DB.Unscoped().Where("id = ?", c.Param("id")).Delete(&models.Room{})
+	roomID := c.Param("id")
+
+	// 检查是否有考试关联
+	var examCount int64
+	models.DB.Model(&models.Exam{}).Where("room_id = ?", roomID).Count(&examCount)
+	if examCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error":   "无法删除教室：存在关联考试记录",
+		})
+		return
+	}
+
+	result := models.DB.Where("id = ?", roomID).Delete(&models.Room{})
 	if result.Error != nil {
-		if isForeignKeyConstraintError(result.Error) {
-			c.JSON(http.StatusConflict, gin.H{
-				"success": false,
-				"error":   "无法删除教室：存在关联考试记录",
-			})
-			return
-		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"error":   "删除教室失败: " + result.Error.Error(),
+			"error":   "删除教室失败",
 		})
 		return
 	}
@@ -102,6 +113,7 @@ func UpdateRoom(c *gin.Context) {
 		Name     *string `json:"name"`
 		Building *string `json:"building"`
 		Type     *string `json:"type"`
+		Remark   *string `json:"remark"`
 		RTSPUrl  *string `json:"rtsp_url"`
 	}
 
@@ -143,6 +155,14 @@ func UpdateRoom(c *gin.Context) {
 			updates["type"] = nil
 		} else {
 			updates["type"] = roomType
+		}
+	}
+	if input.Remark != nil {
+		remark := strings.TrimSpace(*input.Remark)
+		if remark == "" {
+			updates["remark"] = nil
+		} else {
+			updates["remark"] = remark
 		}
 	}
 	if input.RTSPUrl != nil {
@@ -219,9 +239,21 @@ func isForeignKeyConstraintError(err error) bool {
 }
 
 func ListRooms(c *gin.Context) {
-	var rooms []models.Room
+	// 分页参数
+	page, pageSize := parsePaginationParams(c)
+	offset := (page - 1) * pageSize
 
-	if err := models.DB.Find(&rooms).Error; err != nil {
+	var total int64
+	if err := models.DB.Model(&models.Room{}).Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "查询教室总数失败",
+		})
+		return
+	}
+
+	var rooms []models.Room
+	if err := models.DB.Offset(offset).Limit(pageSize).Find(&rooms).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "获取教室列表失败",
@@ -238,6 +270,12 @@ func ListRooms(c *gin.Context) {
 			}
 			return result
 		}(),
+		"pagination": gin.H{
+			"page":       page,
+			"page_size":  pageSize,
+			"total":      total,
+			"total_page": (total + int64(pageSize) - 1) / int64(pageSize),
+		},
 	})
 }
 
