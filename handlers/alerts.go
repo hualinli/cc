@@ -39,10 +39,7 @@ func ListAlerts(c *gin.Context) {
 	var alerts []models.Alert
 	query := models.DB.
 		Model(&models.Alert{}).
-		Joins("JOIN exams ON exams.id = alerts.exam_id").
-		Preload("Exam").
-		Preload("Exam.Room").
-		Preload("Exam.Node")
+		Joins("JOIN exams ON exams.id = alerts.exam_id")
 
 	// 过滤：按考试ID过滤
 	examID := c.Query("exam_id")
@@ -77,6 +74,9 @@ func ListAlerts(c *gin.Context) {
 		return
 	}
 
+	// 手动加载关联考试信息
+	loadAlertsExams(alerts)
+
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": alerts})
 }
 
@@ -110,7 +110,8 @@ func CreateAlert(c *gin.Context) {
 		return
 	}
 
-	models.DB.Preload("Exam").Preload("Exam.Room").Preload("Exam.Node").First(&alert, alert.ID)
+	models.DB.First(&alert, alert.ID)
+	loadAlertExam(&alert)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": alert})
 }
 
@@ -174,7 +175,8 @@ func UpdateAlert(c *gin.Context) {
 		return
 	}
 
-	models.DB.Preload("Exam").Preload("Exam.Room").Preload("Exam.Node").First(&alert, id)
+	models.DB.First(&alert, id)
+	loadAlertExam(&alert)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": alert})
 }
 
@@ -200,7 +202,7 @@ func GetAlerts(c *gin.Context) {
 	id := c.Param("id")
 	var alert models.Alert
 
-	if err := models.DB.Preload("Exam").Preload("Exam.Room").Preload("Exam.Node").First(&alert, id).Error; err != nil {
+	if err := models.DB.First(&alert, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "异常记录不存在"})
 			return
@@ -209,5 +211,6 @@ func GetAlerts(c *gin.Context) {
 		return
 	}
 
+	loadAlertExam(&alert)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": alert})
 }
