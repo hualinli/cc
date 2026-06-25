@@ -678,17 +678,17 @@ func TestGetNodeJumpURL(t *testing.T) {
 		expectSuccess        bool
 	}{
 		{
-			name:          "admin jump url deprecated",
+			name:          "admin jump url success",
 			id:            "1",
 			sessionUserID: uint(1),
 			sessionRole:   "admin",
 			setup: func(t *testing.T) {
 				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 			},
-			expectedCode:         http.StatusGone,
-			expectedBodyContains: "占用节点功能已废弃",
-			expectedURLPrefix:    "",
-			expectSuccess:        false,
+			expectedCode:         http.StatusOK,
+			expectedBodyContains: `"jump_url"`,
+			expectedURLPrefix:    "http://10.0.0.1:8080/",
+			expectSuccess:        true,
 		},
 		{
 			name:          "jump missing role",
@@ -746,12 +746,22 @@ func TestGetNodeJumpURLProctorAcquireNode(t *testing.T) {
 	_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 
 	w := performGetNodeJumpURLRequestWithSession(t, "1", user.ID, "proctor")
-	if w.Code != http.StatusGone {
-		t.Fatalf("expected status 410, got %d, body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d, body=%s", w.Code, w.Body.String())
 	}
 
-	if !strings.Contains(w.Body.String(), "占用节点功能已废弃") {
-		t.Fatalf("expected deprecated message, got body=%s", w.Body.String())
+	var resp struct {
+		Success bool   `json:"success"`
+		JumpURL string `json:"jump_url"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !resp.Success {
+		t.Fatalf("expected success, got body=%s", w.Body.String())
+	}
+	if !strings.HasPrefix(resp.JumpURL, "http://10.0.0.1:8080/") {
+		t.Fatalf("expected jump url prefix, got %q", resp.JumpURL)
 	}
 }
 
@@ -762,7 +772,7 @@ func TestGetNodeJumpURLConcurrentAccess(t *testing.T) {
 	_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 	_ = seedNode(t, "node-2", "m2", "10.0.0.2:8080", models.NodeStatusIdle)
 
-	var goneCount int32
+	var successCount int32
 	var wg sync.WaitGroup
 	wg.Add(10)
 
@@ -775,18 +785,24 @@ func TestGetNodeJumpURLConcurrentAccess(t *testing.T) {
 		go func(uid uint, nid string) {
 			defer wg.Done()
 			w := performGetNodeJumpURLRequestWithSession(t, nid, uid, "proctor")
-			if w.Code == http.StatusGone {
-				atomic.AddInt32(&goneCount, 1)
-			} else {
-				t.Errorf("unexpected status %d, body=%s", w.Code, w.Body.String())
+			if w.Code == http.StatusOK {
+				var resp struct {
+					Success bool   `json:"success"`
+					JumpURL string `json:"jump_url"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &resp); err == nil && resp.Success {
+					atomic.AddInt32(&successCount, 1)
+					return
+				}
 			}
+			t.Errorf("unexpected status %d, body=%s", w.Code, w.Body.String())
 		}(user.ID, nodeID)
 	}
 
 	wg.Wait()
 
-	if goneCount != 10 {
-		t.Fatalf("expected all 10 gone, got gone=%d", goneCount)
+	if successCount != 10 {
+		t.Fatalf("expected all 10 success, got success=%d", successCount)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"cc/models"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -368,10 +369,19 @@ func GetNodeJumpURL(c *gin.Context) {
 		return
 	}
 
-	// 占用节点功能已废弃：节点的使用现在完全由考试调度器管理
-	c.JSON(http.StatusGone, gin.H{
-		"success": false,
-		"error":   "占用节点功能已废弃，节点由考试调度器自动分配",
+	// 检查节点地址是否可用
+	if node.Address == "" || node.Address == "waiting_for_heartbeat" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error":   "节点地址不可用，请等待节点心跳上报",
+		})
+		return
+	}
+
+	jumpURL := fmt.Sprintf("http://%s/", node.Address)
+	c.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"jump_url": jumpURL,
 	})
 }
 
