@@ -1,3 +1,11 @@
+// --- 0. 分页状态（let 声明必须在所有使用前，避免 TDZ 错误）---
+let currentUserPage = 1;
+const userPageSize = 20;
+let currentNodePage = 1;
+const nodePageSize = 20;
+let currentRoomPage = 1;
+const roomPageSize = 20;
+
 // --- 1. 全局：Tab 切换逻辑 ---
 function switchTab(pageId, navElement) {
     // 隐藏所有页面
@@ -1266,9 +1274,6 @@ async function logout() {
 }
 
 // --- 用户管理逻辑 ---
-let currentUserPage = 1;
-const userPageSize = 20;
-
 async function fetchUsers(page = 1) {
     try {
         currentUserPage = page;
@@ -1493,8 +1498,6 @@ setInterval(fetchRooms, 10000); // 10秒同步一次考场数据
 setInterval(() => fetchNodes(currentNodePage), 10000); // 10秒同步一次节点数据
 
 // --- 节点管理逻辑 ---
-let currentNodePage = 1;
-const nodePageSize = 20;
 
 async function fetchNodes(page = 1) {
     try {
@@ -1885,8 +1888,6 @@ async function syncRooms() {
 }
 
 // --- 教室管理逻辑 ---
-let currentRoomPage = 1;
-const roomPageSize = 20;
 
 async function fetchRooms(page = 1) {
     try {
