@@ -5,3 +5,10 @@
 /bin/
 *.db-shm
 *.db-wal
+cc
+.env
+.python-version
+pyproject.toml
+uv.lock
+node_simulator/
+scripts/
