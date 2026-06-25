@@ -198,6 +198,14 @@ func SyncTask(c *gin.Context) {
 				return
 			}
 
+			// 刷新节点租约，确保节点状态与考试一致
+			now := time.Now()
+			models.DB.Model(&models.Node{}).Where("id = ?", nodeIDUint).Updates(map[string]any{
+				"lease_expires_at": now.Add(2 * time.Minute),
+				"status":           models.NodeStatusBusy,
+				"current_exam_id":  input.ExamID,
+			})
+
 			c.JSON(http.StatusOK, gin.H{"success": true, "exam_id": exam.ID})
 			return
 		}
