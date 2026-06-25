@@ -139,10 +139,8 @@ func scheduleExamByID(examID uint, manualRetry bool) error {
 			lockResult := tx.Model(&models.Node{}).
 				Where("id = ? AND status <> ? AND last_heartbeat_at >= ? AND (current_exam_id IS NULL OR current_exam_id = ?)", node.ID, models.NodeStatusOffline, time.Now().Add(-1*time.Minute), exam.ID).
 				Updates(map[string]any{
-					"status":                   models.NodeStatusBusy,
-					"current_user_id":          exam.UserID,
-					"current_user_occupied_at": now,
-					"current_exam_id":          exam.ID,
+					"status":          models.NodeStatusBusy,
+					"current_exam_id": exam.ID,
 				})
 			if lockResult.Error != nil {
 				return lockResult.Error
@@ -237,19 +235,15 @@ func unlockNodeForExam(nodeID, examID uint, reason string) {
 	if dbErr := models.DB.Model(&models.Node{}).
 		Where("id = ? AND status = ? AND current_exam_id = ?", nodeID, models.NodeStatusBusy, examID).
 		Updates(map[string]any{
-			"status":                   models.NodeStatusIdle,
-			"current_user_id":          nil,
-			"current_user_occupied_at": nil,
-			"current_exam_id":          nil,
+			"status":          models.NodeStatusIdle,
+			"current_exam_id": nil,
 		}).Error; dbErr != nil {
 		log.Printf("[ExamScheduler] unlock node failed node=%d exam=%d reason=%s: %v", nodeID, examID, reason, dbErr)
 	}
 	if dbErr := models.DB.Model(&models.Node{}).
 		Where("id = ? AND status <> ? AND current_exam_id = ?", nodeID, models.NodeStatusBusy, examID).
 		Updates(map[string]any{
-			"current_user_id":          nil,
-			"current_user_occupied_at": nil,
-			"current_exam_id":          nil,
+			"current_exam_id": nil,
 		}).Error; dbErr != nil {
 		log.Printf("[ExamScheduler] unlock node exam cleanup failed node=%d exam=%d reason=%s: %v", nodeID, examID, reason, dbErr)
 	}
@@ -267,21 +261,17 @@ func lockAvailableNodeForExam(tx *gorm.DB, exam models.Exam) (models.Node, bool,
 
 		now := time.Now()
 		lockResult := tx.Model(&models.Node{}).
-			Where("id = ? AND status = ? AND current_user_id IS NULL AND current_exam_id IS NULL AND last_heartbeat_at >= ?", candidate.ID, models.NodeStatusIdle, now.Add(-1*time.Minute)).
+			Where("id = ? AND status = ? AND current_exam_id IS NULL AND last_heartbeat_at >= ?", candidate.ID, models.NodeStatusIdle, now.Add(-1*time.Minute)).
 			Updates(map[string]any{
-				"status":                   models.NodeStatusBusy,
-				"current_user_id":          exam.UserID,
-				"current_user_occupied_at": now,
-				"current_exam_id":          exam.ID,
+				"status":          models.NodeStatusBusy,
+				"current_exam_id": exam.ID,
 			})
 		if lockResult.Error != nil {
 			return models.Node{}, false, lockResult.Error
 		}
 		if lockResult.RowsAffected > 0 {
 			candidate.Status = models.NodeStatusBusy
-			candidate.CurrentUserID = &exam.UserID
 			candidate.CurrentExamID = &exam.ID
-			candidate.CurrentUserOccupiedAt = &now
 			return candidate, true, nil
 		}
 	}
@@ -292,7 +282,7 @@ func lockAvailableNodeForExam(tx *gorm.DB, exam models.Exam) (models.Node, bool,
 func pickAvailableNode(tx *gorm.DB) (models.Node, bool, error) {
 	timeout := time.Now().Add(-1 * time.Minute)
 	var node models.Node
-	result := tx.Where("status = ? AND current_user_id IS NULL AND current_exam_id IS NULL AND last_heartbeat_at >= ?", models.NodeStatusIdle, timeout).
+	result := tx.Where("status = ? AND current_exam_id IS NULL AND last_heartbeat_at >= ?", models.NodeStatusIdle, timeout).
 		Order("id asc").
 		Limit(1).
 		Find(&node)
