@@ -378,7 +378,7 @@ func GetNodeJumpURL(c *gin.Context) {
 		return
 	}
 
-	jumpURL := fmt.Sprintf("http://%s/", node.Address)
+	jumpURL := fmt.Sprintf("http://%s/?token=%s", node.Address, node.Token)
 	c.JSON(http.StatusOK, gin.H{
 		"success":  true,
 		"jump_url": jumpURL,

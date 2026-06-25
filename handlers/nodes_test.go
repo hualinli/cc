@@ -687,7 +687,7 @@ func TestGetNodeJumpURL(t *testing.T) {
 			},
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: `"jump_url"`,
-			expectedURLPrefix:    "http://10.0.0.1:8080/",
+			expectedURLPrefix:    "http://10.0.0.1:8080/?token=",
 			expectSuccess:        true,
 		},
 		{
@@ -760,7 +760,7 @@ func TestGetNodeJumpURLProctorAcquireNode(t *testing.T) {
 	if !resp.Success {
 		t.Fatalf("expected success, got body=%s", w.Body.String())
 	}
-	if !strings.HasPrefix(resp.JumpURL, "http://10.0.0.1:8080/") {
+	if !strings.HasPrefix(resp.JumpURL, "http://10.0.0.1:8080/?token=") {
 		t.Fatalf("expected jump url prefix, got %q", resp.JumpURL)
 	}
 }
