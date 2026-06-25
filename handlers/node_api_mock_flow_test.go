@@ -89,7 +89,7 @@ func (m *mockNode) runFlow() (uint, error) {
 		resp, code, err = m.postJSON("/node-api/v1/alerts", map[string]any{
 			"exam_id":     examID,
 			"room_id":     m.roomID,
-			"type":        string(models.AlertTypePhoneCheating),
+			"type":        string("phone_cheating"),
 			"seat_number": fmt.Sprintf("A%d", i+1),
 			"message":     "mock node alert",
 			"x":           0.1,
@@ -203,16 +203,13 @@ func TestMockNodeFullFlow(t *testing.T) {
 	cleanup := setupNodeAPIHandlerTestDB(t)
 	defer cleanup()
 
-	user := seedNodeAPIUser(t)
+	_ = seedNodeAPIUser(t)
 	room := seedNodeAPIRoom(t)
 	node := seedNodeAPIModel(t, "mock-node")
 	node.Token = "mock-node-token"
-	now := time.Now()
 	if err := models.DB.Model(&models.Node{}).Where("id = ?", node.ID).Updates(map[string]any{
-		"token":                    node.Token,
-		"status":                   models.NodeStatusIdle,
-		"current_user_id":          user.ID,
-		"current_user_occupied_at": now,
+		"token":  node.Token,
+		"status": models.NodeStatusIdle,
 	}).Error; err != nil {
 		t.Fatalf("failed to prepare mock node: %v", err)
 	}
@@ -274,9 +271,6 @@ func TestMockNodeFullFlow(t *testing.T) {
 	}
 	if reloadedNode.CurrentExamID != nil {
 		t.Fatalf("expected node current_exam_id nil, got %v", reloadedNode.CurrentExamID)
-	}
-	if reloadedNode.CurrentUserID != nil {
-		t.Fatalf("expected node current_user_id nil, got %v", reloadedNode.CurrentUserID)
 	}
 }
 

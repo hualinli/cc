@@ -4,7 +4,6 @@ import (
 	"cc/models"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -55,12 +54,14 @@ func CreateNode(c *gin.Context) {
 	}
 
 	node := models.Node{
-		Name:      name,
-		Token:     token,
-		NodeModel: model,
-		Address:   address,
-		Status:    models.NodeStatusIdle,
-		Version:   "1.0.0",
+		Name:            name,
+		Token:           token,
+		NodeModel:       model,
+		Address:         address,
+		Status:          models.NodeStatusIdle,
+		Version:         "1.0.0",
+		LastHeartbeatAt: time.Now(),
+		LeaseExpiresAt:  time.Now().Add(2 * time.Minute), // 初始租约 2 分钟
 	}
 
 	if err := models.DB.Create(&node).Error; err != nil {
@@ -80,7 +81,7 @@ func CreateNode(c *gin.Context) {
 func DeleteNode(c *gin.Context) {
 	var node models.Node
 
-	if err := models.DB.Preload("CurrentExam.Room").Where("id = ?", c.Param("id")).First(&node).Error; err != nil {
+	if err := models.DB.Where("id = ?", c.Param("id")).First(&node).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"error":   "节点不存在",
@@ -88,22 +89,30 @@ func DeleteNode(c *gin.Context) {
 		return
 	}
 
-	if node.CurrentUserID != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+	// 检查是否有进行中的考试
+	var runningExamCount int64
+	models.DB.Model(&models.Exam{}).
+		Where("node_id = ? AND end_time IS NULL", node.ID).
+		Count(&runningExamCount)
+
+	if runningExamCount > 0 {
+		c.JSON(http.StatusConflict, gin.H{
 			"success": false,
-			"error":   "无法删除节点：该节点当前正被监考员占用",
+			"error":   "无法删除节点：该节点有正在进行的考试",
 		})
 		return
 	}
 
 	if err := models.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Unscoped().Model(&models.Exam{}).
+		// 清空已结束考试的 node_id 引用
+		if err := tx.Model(&models.Exam{}).
 			Where("node_id = ?", node.ID).
 			Updates(map[string]any{"node_id": nil}).Error; err != nil {
 			return err
 		}
 
-		if err := tx.Unscoped().Where("id = ?", node.ID).Delete(&models.Node{}).Error; err != nil {
+		// 删除节点
+		if err := tx.Delete(&node).Error; err != nil {
 			return err
 		}
 
@@ -211,7 +220,7 @@ func UpdateNode(c *gin.Context) {
 func GetNode(c *gin.Context) {
 	session := sessions.Default(c)
 	userIDVal := session.Get("user_id")
-	userID, ok := userIDVal.(uint)
+	_, ok := userIDVal.(uint)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -221,7 +230,7 @@ func GetNode(c *gin.Context) {
 	}
 
 	roleVal := session.Get("role")
-	roleStr, ok := roleVal.(string)
+	_, ok = roleVal.(string)
 	if !ok {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
@@ -239,16 +248,10 @@ func GetNode(c *gin.Context) {
 		return
 	}
 
-	// 权限检查：管理员可以看到所有节点，监考员只能看到未占用或自己占用的节点
-	if roleStr != "admin" {
-		if node.CurrentUserID != nil && *node.CurrentUserID != userID {
-			c.JSON(http.StatusForbidden, gin.H{
-				"success": false,
-				"error":   "无权访问此节点",
-			})
-			return
-		}
-	}
+	// 加载当前考试信息（包括考场）
+	loadNodeCurrentExam(&node, true)
+
+	// 监考员权限检查已移除：CurrentUserID 字段已删除，节点与监考员的关联通过考试间接管理。
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -259,7 +262,7 @@ func GetNode(c *gin.Context) {
 func ListNodes(c *gin.Context) {
 	session := sessions.Default(c)
 	userIDVal := session.Get("user_id")
-	userID, ok := userIDVal.(uint)
+	_, ok := userIDVal.(uint)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -269,7 +272,7 @@ func ListNodes(c *gin.Context) {
 	}
 
 	roleVal := session.Get("role")
-	roleStr, ok := roleVal.(string)
+	_, ok = roleVal.(string)
 	if !ok {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
@@ -278,16 +281,27 @@ func ListNodes(c *gin.Context) {
 		return
 	}
 
+	// 分页参数
+	page, pageSize := parsePaginationParams(c)
+
 	var nodes []models.Node
-	query := models.DB
+	var total int64
+	query := models.DB.Model(&models.Node{})
 
-	if roleStr == "proctor" {
-		// 监考员只能看到：自己占用的节点
-		query = query.Where("current_user_id = ?", userID)
+	// 监考员节点过滤已移除：CurrentUserID 字段已删除，节点列表对所有已认证用户可见。
+
+	// 计算总数
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"error":   "获取节点总数失败",
+		})
+		return
 	}
-	// 管理员可以看到所有节点
 
-	if err := query.Preload("CurrentExam.Room").Find(&nodes).Error; err != nil {
+	// 分页查询，按 ID 降序
+	offset := (page - 1) * pageSize
+	if err := query.Order("id DESC").Limit(pageSize).Offset(offset).Find(&nodes).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"error":   "获取节点列表失败: " + err.Error(),
@@ -300,10 +314,16 @@ func ListNodes(c *gin.Context) {
 		"data": func() []nodePayload {
 			result := make([]nodePayload, 0, len(nodes))
 			for _, n := range nodes {
-				result = append(result, toNodePayloadWithExam(n))
+				result = append(result, toNodePayload(n))
 			}
 			return result
 		}(),
+		"pagination": gin.H{
+			"page":       page,
+			"page_size":  pageSize,
+			"total":      total,
+			"total_page": (total + int64(pageSize) - 1) / int64(pageSize),
+		},
 	})
 }
 
@@ -320,7 +340,7 @@ func GetNodeJumpURL(c *gin.Context) {
 	roleVal := session.Get("role")
 	userIDVal := session.Get("user_id")
 
-	userID, ok := userIDVal.(uint)
+	_, ok := userIDVal.(uint)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -329,7 +349,7 @@ func GetNodeJumpURL(c *gin.Context) {
 		return
 	}
 
-	role, ok := roleVal.(string)
+	_, ok = roleVal.(string)
 	if !ok {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
@@ -338,7 +358,6 @@ func GetNodeJumpURL(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("[DEBUG] Final userID: %d, role: %v\n", userID, role)
 
 	var node models.Node
 	if err := models.DB.Where("id = ?", c.Param("id")).First(&node).Error; err != nil {
@@ -349,59 +368,10 @@ func GetNodeJumpURL(c *gin.Context) {
 		return
 	}
 
-	// 如果是管理员，直接返回跳转 URL，不修改占用状态
-	if role == "admin" {
-		url := fmt.Sprintf("http://%s?token=%s", node.Address, node.Token)
-		c.JSON(http.StatusOK, gin.H{
-			"success":  true,
-			"jump_url": url,
-		})
-		return
-	}
-
-	// 检查并尝试锁定节点
-	// 严密性逻辑：
-	// 1. 如果节点未被占用且状态为空闲 (status='idle')，允许抢占
-	// 2. 如果节点已经被当前用户占用，允许重入（无论 status 为何，解决刷新页面等问题）
-	var updatedNode models.Node
-	result := models.DB.Model(&updatedNode).
-		Where("id = ? AND (current_user_id = ? OR (current_user_id IS NULL AND status = ?))", c.Param("id"), userID, models.NodeStatusIdle).
-		Updates(map[string]any{
-			"current_user_id":          userID,
-			"current_user_occupied_at": time.Now(),
-		})
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"error":   "锁定节点失败",
-		})
-		return
-	}
-
-	if result.RowsAffected == 0 {
-		c.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"error":   "该节点已被占用或非空闲状态",
-		})
-		return
-	}
-
-	// 重新获取最新的节点信息（包括 Address 和 Token）
-	if err := models.DB.First(&node, c.Param("id")).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"success": false,
-			"error":   "节点不存在",
-		})
-		return
-	}
-
-	// 拼凑跳转 URL，携带 Token 进行简单鉴权
-	url := fmt.Sprintf("http://%s?token=%s", node.Address, node.Token)
-
-	c.JSON(http.StatusOK, gin.H{
-		"success":  true,
-		"jump_url": url,
+	// 占用节点功能已废弃：节点的使用现在完全由考试调度器管理
+	c.JSON(http.StatusGone, gin.H{
+		"success": false,
+		"error":   "占用节点功能已废弃，节点由考试调度器自动分配",
 	})
 }
 
@@ -411,7 +381,7 @@ func ReleaseNode(c *gin.Context) {
 	roleVal := session.Get("role")
 	userIDVal := session.Get("user_id")
 
-	userID, ok := userIDVal.(uint)
+	_, ok := userIDVal.(uint)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -420,7 +390,7 @@ func ReleaseNode(c *gin.Context) {
 		return
 	}
 
-	role, ok := roleVal.(string)
+	_, ok = roleVal.(string)
 	if !ok {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
@@ -438,16 +408,7 @@ func ReleaseNode(c *gin.Context) {
 		return
 	}
 
-	// 管理员可以强制释放任何节点，普通用户只能释放自己的节点
-	if role != "admin" {
-		if node.CurrentUserID == nil || *node.CurrentUserID != userID {
-			c.JSON(http.StatusForbidden, gin.H{
-				"success": false,
-				"error":   "无法释放不属于您的节点",
-			})
-			return
-		}
-	}
+	// CurrentUserID 权限检查已移除：管理员和监考员均可释放节点，节点的使用由考试调度器管理。
 
 	// 释放节点
 	if node.CurrentExamID != nil {
@@ -462,10 +423,8 @@ func ReleaseNode(c *gin.Context) {
 	}
 
 	updates := map[string]any{
-		"status":                   models.NodeStatusIdle,
-		"current_user_id":          nil,
-		"current_user_occupied_at": nil,
-		"current_exam_id":          nil,
+		"status":          models.NodeStatusIdle,
+		"current_exam_id": nil,
 	}
 
 	if err := models.DB.Model(&node).Updates(updates).Error; err != nil {
@@ -487,10 +446,11 @@ func GetNodeStats(c *gin.Context) {
 
 	models.DB.Model(&models.Node{}).Count(&total)
 	models.DB.Model(&models.Node{}).Where("status != ?", models.NodeStatusOffline).Count(&online)
-	models.DB.Model(&models.Node{}).Where("status = ? AND current_user_id IS NULL", models.NodeStatusIdle).Count(&idleAvailable)
+	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusIdle).Count(&idleAvailable)
 	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusBusy).Count(&busy)
+	// 占用状态通过 current_exam_id 判断
 	models.DB.Model(&models.Node{}).
-		Where("current_user_id IS NOT NULL OR current_exam_id IS NOT NULL OR status = ?", models.NodeStatusBusy).
+		Where("current_exam_id IS NOT NULL OR status = ?", models.NodeStatusBusy).
 		Count(&occupied)
 	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusOffline).Count(&offline)
 	models.DB.Model(&models.Node{}).Where("status = ?", models.NodeStatusError).Count(&errNodes)

@@ -37,6 +37,7 @@ func NodeHeartbeat(c *gin.Context) {
 	var input struct {
 		Status  string         `json:"status"`
 		Details map[string]any `json:"details"`
+		Port    int            `json:"port"` // 节点监听端口，默认 8002
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -70,9 +71,15 @@ func NodeHeartbeat(c *gin.Context) {
 	}
 
 	// 更新数据库状态
-	reportedAddress := c.ClientIP() + ":8002"
+	now := time.Now()
+	port := input.Port
+	if port <= 0 || port > 65535 {
+		port = 8002 // 默认端口，兼容旧节点
+	}
+	reportedAddress := fmt.Sprintf("%s:%d", c.ClientIP(), port)
 	updateData := map[string]any{
-		"last_heartbeat_at": time.Now(),
+		"last_heartbeat_at": now,
+		"lease_expires_at":  now.Add(2 * time.Minute), // 租约 2 分钟
 	}
 	if node.Address != reportedAddress {
 		updateData["address"] = reportedAddress // 心跳时按需更新节点地址，减少无效写入
@@ -135,6 +142,7 @@ func SyncTask(c *gin.Context) {
 		DurationMinutes int       `json:"duration_minutes"` // 考试时长（分钟）
 		ExamID          uint      `json:"exam_id"`
 		ExamineeCount   int       `json:"examinee_count"`
+		UserID          uint      `json:"user_id"` // 可选，监考员ID
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -218,10 +226,6 @@ func SyncTask(c *gin.Context) {
 			if err := tx.First(&currentNode, nodeIDUint).Error; err != nil {
 				return err
 			}
-			if currentNode.CurrentUserID == nil {
-				return fmt.Errorf("节点未被任何监考员占用")
-			}
-
 			// 节点重复上报 start（但未携带 exam_id）时，返回当前进行中的考试，避免重复创建。
 			var activeExam models.Exam
 			activeExamErr := tx.Where("node_id = ? AND end_time IS NULL", nodeIDUint).
@@ -232,16 +236,27 @@ func SyncTask(c *gin.Context) {
 				return activeExamErr
 			}
 			if activeExam.ID != 0 {
-				now := time.Now()
 				if err := tx.Model(&currentNode).Updates(map[string]any{
-					"current_exam_id":          activeExam.ID,
-					"current_user_occupied_at": now,
-					"status":                   models.NodeStatusBusy,
+					"current_exam_id": activeExam.ID,
+					"status":          models.NodeStatusBusy,
 				}).Error; err != nil {
 					return err
 				}
 				responseExamID = activeExam.ID
 				return nil
+			}
+
+			userID := input.UserID
+			if userID == 0 {
+				// 未指定 user_id 时，尝试查找一个可用的监考员
+				var defaultUser models.User
+				if err := tx.Where("role = ? AND status = ?", models.Proctor, models.UserStatusActive).
+					Order("id ASC").Limit(1).First(&defaultUser).Error; err == nil {
+					userID = defaultUser.ID
+				}
+			}
+			if userID == 0 {
+				return fmt.Errorf("未指定 user_id 且没有可用的监考员")
 			}
 
 			nodeIDPtr := nodeIDUint
@@ -250,7 +265,7 @@ func SyncTask(c *gin.Context) {
 				Subject:         input.Subject,
 				RoomID:          input.RoomID,
 				NodeID:          &nodeIDPtr,
-				UserID:          *currentNode.CurrentUserID,
+				UserID:          userID,
 				DurationSeconds: input.DurationMinutes * 60,
 				StartTime:       input.StartTime,
 				EndTime:         nil,
@@ -261,11 +276,9 @@ func SyncTask(c *gin.Context) {
 				return err
 			}
 
-			now := time.Now()
 			if err := tx.Model(&currentNode).Updates(map[string]any{
-				"current_exam_id":          exam.ID,
-				"current_user_occupied_at": now,
-				"status":                   models.NodeStatusBusy,
+				"current_exam_id": exam.ID,
+				"status":          models.NodeStatusBusy,
 			}).Error; err != nil {
 				return err
 			}
@@ -333,10 +346,8 @@ func SyncTask(c *gin.Context) {
 			nodeResult := tx.Model(&models.Node{}).
 				Where("id = ? AND current_exam_id = ?", nodeIDUint, input.ExamID).
 				Updates(map[string]any{
-					"current_exam_id":          nil,
-					"current_user_id":          nil,
-					"current_user_occupied_at": nil,
-					"status":                   models.NodeStatusIdle,
+					"current_exam_id": nil,
+					"status":          models.NodeStatusIdle,
 				})
 			if nodeResult.Error != nil {
 				return nodeResult.Error
@@ -558,7 +569,7 @@ func ReportAlert(c *gin.Context) {
 
 	alert := models.Alert{
 		ExamID:      input.ExamID,
-		Type:        models.AlertType(input.Type),
+		Type:        input.Type,
 		SeatNumber:  input.SeatNumber,
 		X:           input.X,
 		Y:           input.Y,
@@ -606,8 +617,6 @@ func setNodeStatusIfChanged(updateData map[string]any, currentStatus string, tar
 
 func clearNodeOccupation(updateData map[string]any) {
 	updateData["current_exam_id"] = nil
-	updateData["current_user_id"] = nil
-	updateData["current_user_occupied_at"] = nil
 }
 
 func mapSyncTaskStartErrorStatus(errMsg string) int {

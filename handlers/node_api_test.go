@@ -185,13 +185,7 @@ func TestSyncTaskStart_CreateExamSuccess(t *testing.T) {
 	node := seedNodeAPIModel(t, "start-create-node")
 
 	now := time.Now()
-	if err := models.DB.Model(&models.Node{}).Where("id = ?", node.ID).Updates(map[string]any{
-		"current_user_id":          user.ID,
-		"current_user_occupied_at": now,
-		"status":                   models.NodeStatusIdle,
-	}).Error; err != nil {
-		t.Fatalf("failed to occupy node: %v", err)
-	}
+	// 节点保持空闲状态，不需要额外设置
 
 	body := fmt.Sprintf(`{"action":"start","room_id":%d,"subject":"math","start_time":"%s","duration_minutes":90,"examinee_count":30}`,
 		room.ID, now.Format(time.RFC3339))
@@ -258,10 +252,8 @@ func TestSyncTaskStart_NoExamIDWithActiveExamReturnsSameID(t *testing.T) {
 	}
 
 	if err := models.DB.Model(&models.Node{}).Where("id = ?", node.ID).Updates(map[string]any{
-		"current_user_id":          user.ID,
-		"current_user_occupied_at": now,
-		"status":                   models.NodeStatusBusy,
-		"current_exam_id":          exam.ID,
+		"status":          models.NodeStatusBusy,
+		"current_exam_id": exam.ID,
 	}).Error; err != nil {
 		t.Fatalf("failed to occupy node: %v", err)
 	}
@@ -360,10 +352,8 @@ func TestSyncTaskStop_Success(t *testing.T) {
 	}
 
 	if err := models.DB.Model(&models.Node{}).Where("id = ?", node.ID).Updates(map[string]any{
-		"current_exam_id":          exam.ID,
-		"current_user_id":          user.ID,
-		"current_user_occupied_at": now,
-		"status":                   models.NodeStatusBusy,
+		"current_exam_id": exam.ID,
+		"status":          models.NodeStatusBusy,
 	}).Error; err != nil {
 		t.Fatalf("failed to set node busy state: %v", err)
 	}
@@ -501,7 +491,7 @@ func TestReportAlert_InvalidTypeReturnsBadRequest(t *testing.T) {
 	if err := models.DB.Order("id desc").First(&reloaded).Error; err != nil {
 		t.Fatalf("failed to load alert: %v", err)
 	}
-	if reloaded.Type != models.AlertType("bad_type") {
+	if reloaded.Type != "bad_type" {
 		t.Fatalf("expected alert type bad_type, got %s", reloaded.Type)
 	}
 }
@@ -539,7 +529,7 @@ func TestReportAlert_ClassNameTypeAccepted(t *testing.T) {
 	if err := models.DB.Order("id desc").First(&reloaded).Error; err != nil {
 		t.Fatalf("failed to load alert: %v", err)
 	}
-	if reloaded.Type != models.AlertType("sleep") {
+	if reloaded.Type != "sleep" {
 		t.Fatalf("expected alert type sleep, got %s", reloaded.Type)
 	}
 }
@@ -664,10 +654,8 @@ func TestNodeHeartbeat_IdleReportWithActiveExamClearsNodeOccupation(t *testing.T
 	}
 
 	if err := models.DB.Model(&models.Node{}).Where("id = ?", node.ID).Updates(map[string]any{
-		"status":                   models.NodeStatusBusy,
-		"current_exam_id":          exam.ID,
-		"current_user_id":          user.ID,
-		"current_user_occupied_at": now,
+		"status":          models.NodeStatusBusy,
+		"current_exam_id": exam.ID,
 	}).Error; err != nil {
 		t.Fatalf("failed to set node busy state: %v", err)
 	}
@@ -686,12 +674,6 @@ func TestNodeHeartbeat_IdleReportWithActiveExamClearsNodeOccupation(t *testing.T
 	}
 	if reloaded.CurrentExamID != nil {
 		t.Fatalf("expected current_exam_id to be cleared, got %v", reloaded.CurrentExamID)
-	}
-	if reloaded.CurrentUserID != nil {
-		t.Fatalf("expected current_user_id to be cleared, got %v", reloaded.CurrentUserID)
-	}
-	if reloaded.CurrentUserOccupiedAt != nil {
-		t.Fatalf("expected current_user_occupied_at to be cleared, got %v", reloaded.CurrentUserOccupiedAt)
 	}
 }
 
@@ -719,10 +701,8 @@ func TestNodeHeartbeat_ErrorReportClearsNodeOccupation(t *testing.T) {
 	}
 
 	if err := models.DB.Model(&models.Node{}).Where("id = ?", node.ID).Updates(map[string]any{
-		"status":                   models.NodeStatusBusy,
-		"current_exam_id":          exam.ID,
-		"current_user_id":          user.ID,
-		"current_user_occupied_at": now,
+		"status":          models.NodeStatusBusy,
+		"current_exam_id": exam.ID,
 	}).Error; err != nil {
 		t.Fatalf("failed to set node busy state: %v", err)
 	}
@@ -741,11 +721,5 @@ func TestNodeHeartbeat_ErrorReportClearsNodeOccupation(t *testing.T) {
 	}
 	if reloaded.CurrentExamID != nil {
 		t.Fatalf("expected current_exam_id to be cleared, got %v", reloaded.CurrentExamID)
-	}
-	if reloaded.CurrentUserID != nil {
-		t.Fatalf("expected current_user_id to be cleared, got %v", reloaded.CurrentUserID)
-	}
-	if reloaded.CurrentUserOccupiedAt != nil {
-		t.Fatalf("expected current_user_occupied_at to be cleared, got %v", reloaded.CurrentUserOccupiedAt)
 	}
 }

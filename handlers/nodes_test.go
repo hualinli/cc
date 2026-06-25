@@ -57,7 +57,7 @@ func setupNodesHandlerTestDB(t *testing.T) func() {
 	}
 }
 
-func seedNode(t *testing.T, name string, model string, address string, status string, currentUserID *uint) models.Node {
+func seedNode(t *testing.T, name string, model string, address string, status string) models.Node {
 	t.Helper()
 
 	node := models.Node{
@@ -67,7 +67,6 @@ func seedNode(t *testing.T, name string, model string, address string, status st
 		Address:       address,
 		Status:        status,
 		Version:       "1.0.0",
-		CurrentUserID: currentUserID,
 	}
 	if err := models.DB.Create(&node).Error; err != nil {
 		t.Fatalf("failed to seed node: %v", err)
@@ -347,7 +346,7 @@ func TestDeleteNode(t *testing.T) {
 			name: "delete node success",
 			id:   "1",
 			setup: func(t *testing.T) {
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 			},
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: `"success":true`,
@@ -365,8 +364,11 @@ func TestDeleteNode(t *testing.T) {
 			setup: func(t *testing.T) {
 				user := seedNodeUser(t, "proctor-for-exam", models.Proctor)
 				room := seedNodeRoom(t)
-				node := seedNode(t, "node-with-exam", "m1", "10.0.0.3:8080", models.NodeStatusIdle, nil)
-				_ = seedExamForNode(t, room.ID, user.ID, node.ID)
+				node := seedNode(t, "node-with-exam", "m1", "10.0.0.3:8080", models.NodeStatusIdle)
+				exam := seedExamForNode(t, room.ID, user.ID, node.ID)
+				// 设置考试为已结束
+				endTime := time.Now()
+				models.DB.Model(&exam).Update("end_time", endTime)
 			},
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: `"success":true`,
@@ -387,21 +389,24 @@ func TestDeleteNode(t *testing.T) {
 			},
 		},
 		{
-			name: "delete node occupied",
+			name: "delete node with running exam",
 			id:   "1",
 			setup: func(t *testing.T) {
 				user := seedNodeUser(t, "proctor1", models.Proctor)
-				_ = seedNode(t, "node-occupied", "m1", "10.0.0.2:8080", models.NodeStatusBusy, &user.ID)
+				room := seedNodeRoom(t)
+				node := seedNode(t, "node-with-running-exam", "m1", "10.0.0.2:8080", models.NodeStatusBusy)
+				// 创建进行中的考试（end_time 为 nil）
+				_ = seedExamForNode(t, room.ID, user.ID, node.ID)
 			},
-			expectedCode:         http.StatusBadRequest,
-			expectedBodyContains: "无法删除节点：该节点当前正被监考员占用",
+			expectedCode:         http.StatusConflict,
+			expectedBodyContains: "无法删除节点：该节点有正在进行的考试",
 			expectSuccess:        false,
 		},
 		{
 			name: "delete node foreign key conflict",
 			id:   "1",
 			setup: func(t *testing.T) {
-				node := seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
+				node := seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 				if err := models.DB.Exec(`CREATE TABLE node_refs (
 					id INTEGER PRIMARY KEY,
 					node_id INTEGER NOT NULL,
@@ -483,7 +488,7 @@ func TestUpdateNode(t *testing.T) {
 			id:          "1",
 			requestBody: `{"name":"node-1-updated","address":"10.0.0.2:8080"}`,
 			setup: func(t *testing.T) {
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 			},
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: `"success":true`,
@@ -506,7 +511,7 @@ func TestUpdateNode(t *testing.T) {
 			id:          "1",
 			requestBody: `{"name":"   "}`,
 			setup: func(t *testing.T) {
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 			},
 			expectedCode:         http.StatusBadRequest,
 			expectedBodyContains: "节点名称不能为空",
@@ -517,7 +522,7 @@ func TestUpdateNode(t *testing.T) {
 			id:          "1",
 			requestBody: `{}`,
 			setup: func(t *testing.T) {
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 			},
 			expectedCode:         http.StatusBadRequest,
 			expectedBodyContains: "没有提供有效的更新字段",
@@ -585,34 +590,34 @@ func TestGetNode(t *testing.T) {
 			sessionUserID: uint(1),
 			sessionRole:   "admin",
 			setup: func(t *testing.T) {
-				other := seedNodeUser(t, "proctor2", models.Proctor)
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusBusy, &other.ID)
+				_ = seedNodeUser(t, "proctor2", models.Proctor)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusBusy)
 			},
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: `"name":"node-1"`,
 			expectSuccess:        true,
 		},
 		{
-			name:          "proctor forbidden for others occupied node",
+			name:          "proctor can get any node",
 			id:            "1",
 			sessionUserID: uint(999),
 			sessionRole:   "proctor",
 			setup: func(t *testing.T) {
-				other := seedNodeUser(t, "proctor2", models.Proctor)
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusBusy, &other.ID)
+				_ = seedNodeUser(t, "proctor2", models.Proctor)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusBusy)
 			},
-			expectedCode:         http.StatusForbidden,
-			expectedBodyContains: "无权访问此节点",
-			expectSuccess:        false,
+			expectedCode:         http.StatusOK,
+			expectedBodyContains: `"name":"node-1"`,
+			expectSuccess:        true,
 		},
 		{
-			name:          "proctor get own occupied node success",
+			name:          "proctor get node success",
 			id:            "1",
 			sessionUserID: uint(1),
 			sessionRole:   "proctor",
 			setup: func(t *testing.T) {
-				owner := seedNodeUser(t, "proctor1", models.Proctor)
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusBusy, &owner.ID)
+				_ = seedNodeUser(t, "proctor1", models.Proctor)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusBusy)
 			},
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: `"name":"node-1"`,
@@ -622,7 +627,7 @@ func TestGetNode(t *testing.T) {
 			name:                 "session role missing",
 			id:                   "1",
 			sessionUserID:        uint(1),
-			setup:                func(t *testing.T) { _ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil) },
+			setup:                func(t *testing.T) { _ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle) },
 			expectedCode:         http.StatusForbidden,
 			expectedBodyContains: "权限不足",
 			expectSuccess:        false,
@@ -673,24 +678,24 @@ func TestGetNodeJumpURL(t *testing.T) {
 		expectSuccess        bool
 	}{
 		{
-			name:          "admin jump url success",
+			name:          "admin jump url deprecated",
 			id:            "1",
 			sessionUserID: uint(1),
 			sessionRole:   "admin",
 			setup: func(t *testing.T) {
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 			},
-			expectedCode:         http.StatusOK,
-			expectedBodyContains: `"success":true`,
-			expectedURLPrefix:    "http://10.0.0.1:8080?token=",
-			expectSuccess:        true,
+			expectedCode:         http.StatusGone,
+			expectedBodyContains: "占用节点功能已废弃",
+			expectedURLPrefix:    "",
+			expectSuccess:        false,
 		},
 		{
 			name:          "jump missing role",
 			id:            "1",
 			sessionUserID: uint(1),
 			setup: func(t *testing.T) {
-				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
+				_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 			},
 			expectedCode:         http.StatusForbidden,
 			expectedBodyContains: "获取用户角色失败",
@@ -738,25 +743,15 @@ func TestGetNodeJumpURLProctorAcquireNode(t *testing.T) {
 	defer cleanup()
 
 	user := seedNodeUser(t, "proctor1", models.Proctor)
-	_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
+	_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
 
 	w := performGetNodeJumpURLRequestWithSession(t, "1", user.ID, "proctor")
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected status 200, got %d, body=%s", w.Code, w.Body.String())
+	if w.Code != http.StatusGone {
+		t.Fatalf("expected status 410, got %d, body=%s", w.Code, w.Body.String())
 	}
 
-	var resp struct {
-		Success bool   `json:"success"`
-		JumpURL string `json:"jump_url"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if !resp.Success {
-		t.Fatalf("expected success=true, got body=%s", w.Body.String())
-	}
-	if !strings.HasPrefix(resp.JumpURL, "http://10.0.0.1:8080?token=") {
-		t.Fatalf("expected jump_url prefix, got %q", resp.JumpURL)
+	if !strings.Contains(w.Body.String(), "占用节点功能已废弃") {
+		t.Fatalf("expected deprecated message, got body=%s", w.Body.String())
 	}
 }
 
@@ -764,11 +759,10 @@ func TestGetNodeJumpURLConcurrentAccess(t *testing.T) {
 	cleanup := setupNodesHandlerTestDB(t)
 	defer cleanup()
 
-	_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
-	_ = seedNode(t, "node-2", "m2", "10.0.0.2:8080", models.NodeStatusIdle, nil)
+	_ = seedNode(t, "node-1", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
+	_ = seedNode(t, "node-2", "m2", "10.0.0.2:8080", models.NodeStatusIdle)
 
-	var successCount int32
-	var forbiddenCount int32
+	var goneCount int32
 	var wg sync.WaitGroup
 	wg.Add(10)
 
@@ -781,12 +775,9 @@ func TestGetNodeJumpURLConcurrentAccess(t *testing.T) {
 		go func(uid uint, nid string) {
 			defer wg.Done()
 			w := performGetNodeJumpURLRequestWithSession(t, nid, uid, "proctor")
-			switch w.Code {
-			case http.StatusOK:
-				atomic.AddInt32(&successCount, 1)
-			case http.StatusForbidden:
-				atomic.AddInt32(&forbiddenCount, 1)
-			default:
+			if w.Code == http.StatusGone {
+				atomic.AddInt32(&goneCount, 1)
+			} else {
 				t.Errorf("unexpected status %d, body=%s", w.Code, w.Body.String())
 			}
 		}(user.ID, nodeID)
@@ -794,8 +785,8 @@ func TestGetNodeJumpURLConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 
-	if successCount != 2 || forbiddenCount != 8 {
-		t.Fatalf("expected two successes and eight forbidden, got success=%d forbidden=%d", successCount, forbiddenCount)
+	if goneCount != 10 {
+		t.Fatalf("expected all 10 gone, got gone=%d", goneCount)
 	}
 }
 
@@ -816,11 +807,11 @@ func TestListNodes(t *testing.T) {
 			sessionUserID: uint(1),
 			sessionRole:   "admin",
 			setup: func(t *testing.T) {
-				owner1 := seedNodeUser(t, "proctor1", models.Proctor)
-				owner2 := seedNodeUser(t, "proctor2", models.Proctor)
-				_ = seedNode(t, "node-free", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
-				_ = seedNode(t, "node-own", "m1", "10.0.0.2:8080", models.NodeStatusBusy, &owner1.ID)
-				_ = seedNode(t, "node-other", "m1", "10.0.0.3:8080", models.NodeStatusBusy, &owner2.ID)
+				_ = seedNodeUser(t, "proctor1", models.Proctor)
+				_ = seedNodeUser(t, "proctor2", models.Proctor)
+				_ = seedNode(t, "node-free", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
+				_ = seedNode(t, "node-own", "m1", "10.0.0.2:8080", models.NodeStatusBusy)
+				_ = seedNode(t, "node-other", "m1", "10.0.0.3:8080", models.NodeStatusBusy)
 			},
 			expectedCode:         http.StatusOK,
 			expectedBodyContains: []string{`"node-free"`, `"node-own"`, `"node-other"`},
@@ -828,20 +819,20 @@ func TestListNodes(t *testing.T) {
 			expectSuccess:        true,
 		},
 		{
-			name:          "proctor sees free and own only",
+			name:          "proctor sees all nodes",
 			sessionUserID: uint(1),
 			sessionRole:   "proctor",
 			setup: func(t *testing.T) {
-				owner1 := seedNodeUser(t, "proctor1", models.Proctor)
-				owner2 := seedNodeUser(t, "proctor2", models.Proctor)
-				_ = seedNode(t, "node-free", "m1", "10.0.0.1:8080", models.NodeStatusIdle, nil)
-				_ = seedNode(t, "node-own", "m1", "10.0.0.2:8080", models.NodeStatusBusy, &owner1.ID)
-				_ = seedNode(t, "node-other", "m1", "10.0.0.3:8080", models.NodeStatusBusy, &owner2.ID)
+				_ = seedNodeUser(t, "proctor1", models.Proctor)
+				_ = seedNodeUser(t, "proctor2", models.Proctor)
+				_ = seedNode(t, "node-free", "m1", "10.0.0.1:8080", models.NodeStatusIdle)
+				_ = seedNode(t, "node-own", "m1", "10.0.0.2:8080", models.NodeStatusBusy)
+				_ = seedNode(t, "node-other", "m1", "10.0.0.3:8080", models.NodeStatusBusy)
 			},
 			expectedCode:         http.StatusOK,
-			expectedBodyContains: []string{`"node-free"`, `"node-own"`},
-			expectedNotContains:  []string{`"node-other"`},
-			expectedDataCount:    2,
+			expectedBodyContains: []string{`"node-free"`, `"node-own"`, `"node-other"`},
+			expectedNotContains:  nil,
+			expectedDataCount:    3,
 			expectSuccess:        true,
 		},
 		{
