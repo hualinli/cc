@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"log"
 
 	"golang.org/x/crypto/bcrypt"
@@ -12,10 +13,18 @@ import (
 var DB *gorm.DB
 
 func Init() {
+	InitWithPath("cc.db")
+}
+
+func InitWithPath(dbPath string) {
 	// 打开数据库
 	var err error
 	// SQLite: 低并发场景优先稳定性，启用 WAL 与 busy_timeout。
-	DB, err = gorm.Open(sqlite.Open("cc.db?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{})
+	// 禁用外键约束，由业务逻辑保证一致性，避免死锁。
+	dsn := fmt.Sprintf("%s?_journal_mode=WAL&_busy_timeout=5000", dbPath)
+	DB, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		DisableForeignKeyConstraintWhenMigrating: true,
+	})
 	if err != nil {
 		log.Fatal("failed to connect database:", err)
 	}
@@ -28,7 +37,7 @@ func Init() {
 	sqlDB.SetMaxOpenConns(1)
 	sqlDB.SetMaxIdleConns(1)
 
-	// 自动迁移所有表结构
+	// 自动迁移所有表结构（不创建外键约束）
 	err = DB.AutoMigrate(
 		&User{},
 		&Room{},
@@ -56,7 +65,7 @@ func EnsureSQLiteIndexes(db *gorm.DB) error {
 		return nil
 	}
 
-	// 业务约束：同一节点同一时刻仅允许一场“进行中考试”。
+	// 业务约束：同一节点同一时刻仅允许一场"进行中考试"。
 	// end_time 为 NULL 表示进行中。
 	if err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_exams_node_active ON exams(node_id) WHERE end_time IS NULL AND node_id IS NOT NULL;").Error; err != nil {
 		return err
