@@ -10,6 +10,11 @@ import (
 
 const cleanupInterval = 1 * time.Minute
 
+// startupGracePeriod 启动后的宽限期，避免因控制中心重启导致所有节点租约过期而被误关考试。
+const startupGracePeriod = 2 * time.Minute
+
+var cleanupStartedAt = time.Now()
+
 // StartCleanupTask 启动定期清理任务
 func StartCleanupTask() {
 	go func() {
@@ -17,6 +22,7 @@ func StartCleanupTask() {
 		defer ticker.Stop()
 
 		log.Println("[Cleanup] Task started, interval:", cleanupInterval)
+		log.Printf("[Cleanup] Startup grace period: %v (lease checks deferred)", startupGracePeriod)
 
 		for range ticker.C {
 			runCleanupTasks()
@@ -38,13 +44,29 @@ func runCleanupTasks() {
 	markOfflineNodes()
 }
 
-// checkExpiredLeases 检查租约过期的节点，自动关闭其考试
+// checkExpiredLeases 检查租约过期的节点，自动关闭其考试。
+//
+// 兜底机制：
+//   - 节点断电：心跳停止 → lease_expires_at 过期 → 关闭考试 + 标记 interrupted
+//   - 控制中心重启：启动后有 2 分钟宽限期，允许节点重新发送心跳刷新租约，
+//     避免将所有运行中的考试误关。
+//   - 双重条件：除 lease_expires_at 外，额外检查 last_heartbeat_at，
+//     确保节点确实停止通信（而非控制中心单方面重启）。
 func checkExpiredLeases() {
 	now := time.Now()
 
+	// 启动宽限期：控制中心重启后等待节点重新心跳，避免误关考试
+	if time.Since(cleanupStartedAt) < startupGracePeriod {
+		return
+	}
+
+	// 双重条件：租约过期 + 心跳超时（节点确实失联）
+	heartbeatTimeout := now.Add(-2 * time.Minute)
 	var expiredNodes []models.Node
-	result := models.DB.Where("lease_expires_at < ? AND current_exam_id IS NOT NULL", now).
-		Find(&expiredNodes)
+	result := models.DB.Where(
+		"lease_expires_at < ? AND last_heartbeat_at < ? AND current_exam_id IS NOT NULL",
+		now, heartbeatTimeout,
+	).Find(&expiredNodes)
 
 	if result.Error != nil {
 		log.Printf("[Cleanup] query expired leases failed: %v", result.Error)
@@ -55,7 +77,7 @@ func checkExpiredLeases() {
 		return
 	}
 
-	log.Printf("[Cleanup] found %d nodes with expired leases", len(expiredNodes))
+	log.Printf("[Cleanup] found %d nodes with expired leases (lease expired + heartbeat timeout)", len(expiredNodes))
 
 	for _, node := range expiredNodes {
 		if node.CurrentExamID == nil {

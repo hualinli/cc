@@ -43,14 +43,14 @@ func seedCleanupRoom(t *testing.T) models.Room {
 	return room
 }
 
-func seedCleanupNode(t *testing.T, name, status string, leaseExpiresAt time.Time) models.Node {
+func seedCleanupNode(t *testing.T, name, status string, lastHeartbeatAt, leaseExpiresAt time.Time) models.Node {
 	node := models.Node{
 		Name:            name,
 		Token:           "token-" + name,
 		NodeModel:       "Standard",
 		Address:         "192.168.1.100:8002",
 		Status:          status,
-		LastHeartbeatAt: time.Now(),
+		LastHeartbeatAt: lastHeartbeatAt,
 		LeaseExpiresAt:  leaseExpiresAt,
 	}
 	if err := models.DB.Create(&node).Error; err != nil {
@@ -68,8 +68,13 @@ func TestCheckExpiredLeases(t *testing.T) {
 		user := seedCleanupUser(t)
 		room := seedCleanupRoom(t)
 
-		// 创建租约已过期的节点
-		node := seedCleanupNode(t, "expired-node", models.NodeStatusBusy, time.Now().Add(-1*time.Minute))
+		// 绕过启动宽限期
+		cleanupStartedAt = time.Now().Add(-5 * time.Minute)
+
+		// 创建租约和心跳均已过期的节点（双重条件）
+		node := seedCleanupNode(t, "expired-node", models.NodeStatusBusy,
+			time.Now().Add(-3*time.Minute),  // last_heartbeat_at 过期
+			time.Now().Add(-1*time.Minute))  // lease_expires_at 过期
 
 		// 创建进行中的考试
 		exam := models.Exam{
@@ -128,7 +133,7 @@ func TestCheckExpiredLeases(t *testing.T) {
 		room := seedCleanupRoom(t)
 
 		// 创建租约未过期的节点
-		node := seedCleanupNode(t, "active-node", models.NodeStatusBusy, time.Now().Add(1*time.Minute))
+		node := seedCleanupNode(t, "active-node", models.NodeStatusBusy, time.Now(), time.Now().Add(1*time.Minute))
 
 		// 创建进行中的考试
 		exam := models.Exam{
@@ -173,7 +178,7 @@ func TestCloseExpiredExams(t *testing.T) {
 
 		user := seedCleanupUser(t)
 		room := seedCleanupRoom(t)
-		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now().Add(1*time.Minute))
+		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now(), time.Now().Add(1*time.Minute))
 
 		// 创建超时的考试（开始于 2 小时前，时长 1 小时）
 		exam := models.Exam{
@@ -221,7 +226,7 @@ func TestCloseExpiredExams(t *testing.T) {
 
 		user := seedCleanupUser(t)
 		room := seedCleanupRoom(t)
-		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now().Add(1*time.Minute))
+		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now(), time.Now().Add(1*time.Minute))
 
 		// 创建刚超过时长的考试（在宽限期内）
 		exam := models.Exam{
@@ -258,7 +263,7 @@ func TestCleanOrphanData(t *testing.T) {
 
 		user := seedCleanupUser(t)
 		room := seedCleanupRoom(t)
-		node := seedCleanupNode(t, "idle-node", models.NodeStatusIdle, time.Now().Add(1*time.Minute))
+		node := seedCleanupNode(t, "idle-node", models.NodeStatusIdle, time.Now(), time.Now().Add(1*time.Minute))
 
 		// 创建考试
 		exam := models.Exam{
@@ -293,7 +298,7 @@ func TestCleanOrphanData(t *testing.T) {
 
 		user := seedCleanupUser(t)
 		room := seedCleanupRoom(t)
-		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now().Add(1*time.Minute))
+		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now(), time.Now().Add(1*time.Minute))
 
 		// 创建已结束的考试
 		endTime := time.Now().Add(-5 * time.Minute)
@@ -332,7 +337,7 @@ func TestMarkOfflineNodes(t *testing.T) {
 		defer cleanup()
 
 		// 创建心跳超时的节点
-		node := seedCleanupNode(t, "timeout-node", models.NodeStatusIdle, time.Now().Add(1*time.Minute))
+		node := seedCleanupNode(t, "timeout-node", models.NodeStatusIdle, time.Now(), time.Now().Add(1*time.Minute))
 		models.DB.Model(&node).Update("last_heartbeat_at", time.Now().Add(-10*time.Minute))
 
 		// 运行清理
@@ -352,7 +357,7 @@ func TestMarkOfflineNodes(t *testing.T) {
 		defer cleanup()
 
 		// 创建心跳正常的节点
-		node := seedCleanupNode(t, "active-node", models.NodeStatusIdle, time.Now().Add(1*time.Minute))
+		node := seedCleanupNode(t, "active-node", models.NodeStatusIdle, time.Now(), time.Now().Add(1*time.Minute))
 
 		// 运行清理
 		markOfflineNodes()
