@@ -36,9 +36,10 @@ func NodeHeartbeat(c *gin.Context) {
 	}
 
 	var rawInput struct {
-		Status  string         `json:"status"`
-		Details map[string]any `json:"details"`
-		Port    any            `json:"port"` // 兼容 int/string/null
+		Status      string         `json:"status"`
+		Details     map[string]any `json:"details"`
+		Port        any            `json:"port"`        // 兼容 int/string/null（旧节点）
+		NodeAddress string         `json:"node_address"` // 节点自报地址（如 192.168.1.100:8002）
 	}
 
 	if err := c.ShouldBindJSON(&rawInput); err != nil {
@@ -48,9 +49,6 @@ func NodeHeartbeat(c *gin.Context) {
 		})
 		return
 	}
-
-	// 解析端口号，兼容 JSON 中的整数、字符串和 null
-	port := parsePort(rawInput.Port)
 
 	if rawInput.Status != "" {
 		switch rawInput.Status {
@@ -76,7 +74,12 @@ func NodeHeartbeat(c *gin.Context) {
 
 	// 更新数据库状态
 	now := time.Now()
-	reportedAddress := fmt.Sprintf("%s:%d", c.ClientIP(), port)
+	// 优先使用节点自报地址，兼容旧节点：port 字段 + 源 IP 作为兜底
+	reportedAddress := strings.TrimSpace(rawInput.NodeAddress)
+	if reportedAddress == "" {
+		port := parsePort(rawInput.Port)
+		reportedAddress = fmt.Sprintf("%s:%d", c.ClientIP(), port)
+	}
 	updateData := map[string]any{
 		"last_heartbeat_at": now,
 		"lease_expires_at":  now.Add(2 * time.Minute), // 租约 2 分钟
