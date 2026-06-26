@@ -176,7 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <td>
                         ${!endTime && node.id ? `<button onclick="enterNode(${node.id})" style="padding: 0.25rem 0.75rem; background: var(--primary-color); color: white; border: none; border-radius: 0.25rem; cursor: pointer; font-size: 0.75rem;">
                             <i class="fa-solid fa-right-to-bracket"></i> 进入
-                        </button>` : '<span style="color: #9ca3af; font-size: 0.75rem;">${endTime ? '已结束' : '-'}</span>'}
+                        </button>` : '<span style="color: #9ca3af; font-size: 0.75rem;">' + (endTime ? '已结束' : '-') + '</span>'}
                     </td>
                 </tr>
             `;
