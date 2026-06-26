@@ -742,13 +742,16 @@ func TestNodeExamConsistency_LeaseExpirationWithRunningExam(t *testing.T) {
 	}
 	db.Create(&exam)
 
+	// 绕过启动宽限期
+	cleanupStartedAt = time.Now().Add(-5 * time.Minute)
+
 	examID := exam.ID
 	node := models.Node{
 		Name: "lease-node", Token: "lease-tok", NodeModel: "m1",
 		Address: "10.0.0.1:8080", Status: models.NodeStatusBusy,
 		Version: "1.0.0", CurrentExamID: &examID,
-		LastHeartbeatAt: time.Now(),
-		LeaseExpiresAt:  time.Now().Add(-1 * time.Minute), // 租约已过期
+		LastHeartbeatAt: time.Now().Add(-3 * time.Minute),  // 心跳也已停止
+		LeaseExpiresAt:  time.Now().Add(-1 * time.Minute),  // 租约已过期
 	}
 	db.Create(&node)
 

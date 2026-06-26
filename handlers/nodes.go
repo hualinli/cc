@@ -59,10 +59,10 @@ func CreateNode(c *gin.Context) {
 		Token:           token,
 		NodeModel:       model,
 		Address:         address,
-		Status:          models.NodeStatusIdle,
+		Status:          models.NodeStatusOffline, // 新建节点默认离线，收到心跳后更新为真实状态
 		Version:         "1.0.0",
-		LastHeartbeatAt: time.Now(),
-		LeaseExpiresAt:  time.Now().Add(2 * time.Minute), // 初始租约 2 分钟
+		LastHeartbeatAt: time.Time{},              // 尚未收到心跳
+		LeaseExpiresAt:  time.Now().Add(-1 * time.Minute), // 租约已过期，调度器不会选中
 	}
 
 	if err := models.DB.Create(&node).Error; err != nil {
