@@ -565,8 +565,9 @@ async function loadExamFormOptions() {
 function openExamModal() {
     const minStart = getNextMinuteDate();
 
-    // 设置日期为今天
-    document.getElementById('modalExamDate').value = minStart.toISOString().split('T')[0];
+    // 设置日期为今天（用本地日期，避免 toISOString 在 UTC+8 凌晨返回前一天）
+    const todayStr = `${minStart.getFullYear()}-${String(minStart.getMonth() + 1).padStart(2, '0')}-${String(minStart.getDate()).padStart(2, '0')}`;
+    document.getElementById('modalExamDate').value = todayStr;
 
     // 设置时间为下一分钟
     const timeVal = `${String(minStart.getHours()).padStart(2, '0')}:${String(minStart.getMinutes()).padStart(2, '0')}`;
@@ -590,7 +591,8 @@ function openExamModal() {
     // 监听日期和时间变化，更新预览
     document.getElementById('modalExamDate').onchange = function () {
         const dateVal = this.value;
-        const today = new Date().toISOString().split('T')[0];
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
         const timeInput = document.getElementById('modalExamTime');
         if (dateVal === today) {
             const minStart = getNextMinuteDate();
