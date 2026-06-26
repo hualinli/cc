@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,22 +35,25 @@ func NodeHeartbeat(c *gin.Context) {
 		return
 	}
 
-	var input struct {
+	var rawInput struct {
 		Status  string         `json:"status"`
 		Details map[string]any `json:"details"`
-		Port    int            `json:"port"` // 节点监听端口，默认 8002
+		Port    any            `json:"port"` // 兼容 int/string/null
 	}
 
-	if err := c.ShouldBindJSON(&input); err != nil {
+	if err := c.ShouldBindJSON(&rawInput); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "请求参数错误",
+			"error":   "请求参数错误: " + err.Error(),
 		})
 		return
 	}
 
-	if input.Status != "" {
-		switch input.Status {
+	// 解析端口号，兼容 JSON 中的整数、字符串和 null
+	port := parsePort(rawInput.Port)
+
+	if rawInput.Status != "" {
+		switch rawInput.Status {
 		case models.NodeStatusIdle, models.NodeStatusBusy, models.NodeStatusError:
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -72,10 +76,6 @@ func NodeHeartbeat(c *gin.Context) {
 
 	// 更新数据库状态
 	now := time.Now()
-	port := input.Port
-	if port <= 0 || port > 65535 {
-		port = 8002 // 默认端口，兼容旧节点
-	}
 	reportedAddress := fmt.Sprintf("%s:%d", c.ClientIP(), port)
 	updateData := map[string]any{
 		"last_heartbeat_at": now,
@@ -87,15 +87,15 @@ func NodeHeartbeat(c *gin.Context) {
 
 	// 心跳仅接收节点运行态（idle/busy/error）。
 	// offline 由 cleanup 根据超时统一写入，避免节点自行宣告离线。
-	if input.Status != "" {
-		switch input.Status {
+	if rawInput.Status != "" {
+		switch rawInput.Status {
 		case models.NodeStatusIdle:
 			// 节点上报 idle：仅更新 node 侧状态与占用字段。
 			// 其他表的收敛（如自动关考）交由 cleanup 任务统一处理。
 			clearNodeOccupation(updateData)
 			setNodeStatusIfChanged(updateData, node.Status, models.NodeStatusIdle)
 		case models.NodeStatusBusy:
-			setNodeStatusIfChanged(updateData, node.Status, input.Status)
+			setNodeStatusIfChanged(updateData, node.Status, rawInput.Status)
 		case models.NodeStatusError:
 			clearNodeOccupation(updateData)
 			setNodeStatusIfChanged(updateData, node.Status, models.NodeStatusError)
@@ -625,6 +625,24 @@ func setNodeStatusIfChanged(updateData map[string]any, currentStatus string, tar
 
 func clearNodeOccupation(updateData map[string]any) {
 	updateData["current_exam_id"] = nil
+}
+
+// parsePort 解析端口号，兼容 JSON 中的整数（float64）、字符串。
+// 无效或越界时返回默认值 8002。
+func parsePort(v any) int {
+	switch val := v.(type) {
+	case float64:
+		// JSON 数字默认解析为 float64
+		port := int(val)
+		if port > 0 && port <= 65535 {
+			return port
+		}
+	case string:
+		if port, err := strconv.Atoi(val); err == nil && port > 0 && port <= 65535 {
+			return port
+		}
+	}
+	return 8002 // 默认端口
 }
 
 func mapSyncTaskStartErrorStatus(errMsg string) int {
