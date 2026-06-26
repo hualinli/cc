@@ -515,16 +515,17 @@ func GetExamStats(c *gin.Context) {
 		anomalyCoeff = float64(totalAnomalies) / float64(totalStudents)
 	}
 
-	// 为每个考试统计异常数
+	// 加载关联数据并转换为 payload，确保 Room/Node 序列化到 JSON
 	type ExamWithAnomalies struct {
-		models.Exam
+		examPayload
 		AnomaliesCount int64 `json:"anomalies_count"`
 	}
 
 	examsWithAnomalies := make([]ExamWithAnomalies, 0, len(ongoingExams))
 	for _, exam := range ongoingExams {
+		loadExamAssociations(&exam, true, true, false) // 加载 Room 和 Node
 		examsWithAnomalies = append(examsWithAnomalies, ExamWithAnomalies{
-			Exam:           exam,
+			examPayload:    toExamPayload(exam),
 			AnomaliesCount: alertCounts[exam.ID],
 		})
 	}
