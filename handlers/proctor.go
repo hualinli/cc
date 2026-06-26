@@ -52,8 +52,9 @@ func ListProctorExams(c *gin.Context) {
 		// 未开始
 		query = query.Where("start_time > ?", now)
 	case "ongoing":
-		// 进行中
-		query = query.Where("start_time <= ? AND end_time IS NULL", now)
+		// 实际在运行中的考试
+		query = query.Where("start_time <= ? AND end_time IS NULL AND schedule_status = ?",
+			now, models.ExamScheduleRunning)
 	case "completed":
 		// 已结束
 		query = query.Where("end_time IS NOT NULL")
@@ -119,16 +120,17 @@ func GetProctorExamStats(c *gin.Context) {
 	var totalExams int64
 	models.DB.Model(&models.Exam{}).Where("user_id = ?", userID).Count(&totalExams)
 
-	// 进行中的考试数
+	// 进行中的考试数（已开考且实际在运行中）
 	var ongoingExams int64
 	models.DB.Model(&models.Exam{}).
-		Where("user_id = ? AND start_time <= ? AND end_time IS NULL", userID, now).
+		Where("user_id = ? AND start_time <= ? AND end_time IS NULL AND schedule_status = ?",
+			userID, now, models.ExamScheduleRunning).
 		Count(&ongoingExams)
 
 	// 未开始的考试数
 	var upcomingExams int64
 	models.DB.Model(&models.Exam{}).
-		Where("user_id = ? AND start_time > ?", userID, now).
+		Where("user_id = ? AND start_time > ? AND end_time IS NULL", userID, now).
 		Count(&upcomingExams)
 
 	// 已完成的考试数
