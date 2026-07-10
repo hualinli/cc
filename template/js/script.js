@@ -546,9 +546,10 @@ async function loadExamFormOptions() {
             })()
             : '<option value="">暂无教室</option>';
 
-        userSelect.innerHTML = users.length
-            ? users.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (${u.role === 'admin' ? '管理员' : '监考员'})</option>`).join('')
-            : '<option value="">暂无用户</option>';
+        const activeUsers = users.filter(u => u.status !== 'disabled');
+        userSelect.innerHTML = activeUsers.length
+            ? activeUsers.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (${u.role === 'admin' ? '管理员' : '监考员'})</option>`).join('')
+            : '<option value="">暂无可用用户</option>';
 
         const availableNodes = nodes.filter(n => n.status === 'idle' && !n.current_exam_id);
         nodeSelect.innerHTML = `<option value="">到点自动分配</option>${availableNodes
@@ -1304,10 +1305,15 @@ async function fetchUsers(page = 1) {
         const offset = (page - 1) * userPageSize;
         users.forEach((user, idx) => {
             const tr = document.createElement('tr');
+            const isDisabled = user.status === 'disabled';
+            const statusBadge = isDisabled
+                ? '<span class="badge bg-secondary">已禁用</span>'
+                : '<span class="badge bg-success">正常</span>';
             tr.innerHTML = `
             <td>${offset + idx + 1}</td>
                 <td>${user.username}</td>
                 <td><span class="badge ${user.role === 'admin' ? 'bg-danger' : 'bg-primary'}">${user.role === 'admin' ? '管理员' : '监考员'}</span></td>
+                <td>${statusBadge}</td>
                 <td>${formatDateTime(user.created_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
@@ -1315,7 +1321,10 @@ async function fetchUsers(page = 1) {
                             <i class="fa-solid fa-pen-to-square"></i> 编辑
                         </button>
                         ${user.username !== 'admin' ? `
-                            <button class="btn-table btn-delete" onclick="deleteUser(${user.id}, '${user.username}')">
+                            <button class="btn-table" onclick="toggleUserStatus(${user.id}, '${user.username}', ${isDisabled})" style="background: ${isDisabled ? 'var(--success-color)' : '#6c757d'}; color: white;">
+                                <i class="fa-solid ${isDisabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i> ${isDisabled ? '启用' : '禁用'}
+                            </button>
+                            <button class="btn-table btn-delete" onclick="forceDeleteUser(${user.id}, '${user.username}')">
                                 <i class="fa-solid fa-trash"></i> 删除
                             </button>
                         ` : ''}
@@ -1455,15 +1464,41 @@ async function submitUser() {
     }
 }
 
-async function deleteUser(id, username) {
-    if (!confirm(`确定要删除用户 "${username}" 吗？`)) return;
+async function toggleUserStatus(id, username, currentlyDisabled) {
+    const action = currentlyDisabled ? '启用' : '禁用';
+    if (!confirm(`确定要${action}用户 "${username}" 吗？`)) return;
 
     try {
-        const { response, result, aborted } = await requestJSON(`/api/users/${id}`, { method: 'DELETE' });
+        const newStatus = currentlyDisabled ? 'active' : 'disabled';
+        const response = await fetch(`/api/users/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+            alert(`${action}成功`);
+            fetchUsers();
+        } else {
+            alert(result.error || `${action}失败`);
+        }
+    } catch (err) {
+        alert('网络请求出错');
+    }
+}
+
+async function forceDeleteUser(id, username) {
+    if (!confirm(`【危险操作】\n\n确定要强制删除用户 "${username}" 吗？\n\n此操作将同时删除该用户的所有考试记录和告警数据，且不可恢复！`)) return;
+    if (!confirm(`请再次确认：真的要永久删除用户 "${username}" 及其所有关联数据吗？`)) return;
+
+    try {
+        const { response, result, aborted } = await requestJSON(`/api/users/${id}/force`, { method: 'DELETE' });
         if (aborted || !result) return;
 
         if (response.ok && result.success) {
-            alert('删除成功');
+            alert('用户已永久删除');
             fetchUsers();
         } else {
             alert(result.error || '删除失败');

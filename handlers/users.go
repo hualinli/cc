@@ -307,6 +307,7 @@ func UpdateUser(c *gin.Context) {
 		Username *string `json:"username"`
 		Password *string `json:"password"`
 		Role     *string `json:"role"`
+		Status   *string `json:"status"`
 	}
 
 	var input Input
@@ -362,6 +363,18 @@ func UpdateUser(c *gin.Context) {
 			return
 		}
 		updates["role"] = models.UserRole(role)
+	}
+
+	if input.Status != nil {
+		status := strings.TrimSpace(*input.Status)
+		if status != models.UserStatusActive && status != models.UserStatusDisabled {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"error":   "状态值非法",
+			})
+			return
+		}
+		updates["status"] = status
 	}
 
 	if len(updates) == 0 {

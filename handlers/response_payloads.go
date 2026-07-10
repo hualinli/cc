@@ -9,6 +9,7 @@ type userPayload struct {
 	ID        uint      `json:"id"`
 	Username  string    `json:"username"`
 	Role      string    `json:"role"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -73,6 +74,7 @@ func toUserPayload(u models.User) userPayload {
 		ID:        u.ID,
 		Username:  u.Username,
 		Role:      string(u.Role),
+		Status:    u.Status,
 		CreatedAt: u.CreatedAt,
 		UpdatedAt: u.UpdatedAt,
 	}
