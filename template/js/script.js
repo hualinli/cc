@@ -1,3 +1,11 @@
+// --- 0. 分页状态（let 声明必须在所有使用前，避免 TDZ 错误）---
+let currentUserPage = 1;
+const userPageSize = 20;
+let currentNodePage = 1;
+const nodePageSize = 20;
+let currentRoomPage = 1;
+const roomPageSize = 20;
+
 // --- 1. 全局：Tab 切换逻辑 ---
 function switchTab(pageId, navElement) {
     // 隐藏所有页面
@@ -138,7 +146,6 @@ function normalizeEntity(entity) {
     if (normalized.start_time === undefined && normalized.StartTime !== undefined) normalized.start_time = normalized.StartTime;
     if (normalized.end_time === undefined && normalized.EndTime !== undefined) normalized.end_time = normalized.EndTime;
     if (normalized.last_heartbeat_at === undefined && normalized.LastHeartbeatAt !== undefined) normalized.last_heartbeat_at = normalized.LastHeartbeatAt;
-    if (normalized.current_user_id === undefined && normalized.CurrentUserID !== undefined) normalized.current_user_id = normalized.CurrentUserID;
     if (normalized.current_exam_id === undefined && normalized.CurrentExamID !== undefined) normalized.current_exam_id = normalized.CurrentExamID;
 
     if (!normalized.room && normalized.Room) normalized.room = normalizeEntity(normalized.Room);
@@ -236,6 +243,101 @@ function getNextMinuteDate(baseDate = new Date()) {
     next.setSeconds(0, 0);
     next.setMinutes(next.getMinutes() + 1);
     return next;
+}
+
+function buildTimePresets() {
+    const container = document.getElementById('timePresets');
+    if (!container) return;
+
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+
+    // 按钮：现在（当前分钟）、+5分钟后、常用时段
+    const presets = [];
+
+    // "现在" — 当前时间的下一分钟
+    const nextMin = getNextMinuteDate(now);
+    presets.push({
+        label: '现在',
+        value: `${String(nextMin.getHours()).padStart(2, '0')}:${String(nextMin.getMinutes()).padStart(2, '0')}`,
+        cls: 'btn-time-now'
+    });
+
+    // "+5 分钟"
+    const plus5 = new Date(now);
+    plus5.setSeconds(0, 0);
+    plus5.setMinutes(plus5.getMinutes() + 5);
+    presets.push({
+        label: '+5分',
+        value: `${String(plus5.getHours()).padStart(2, '0')}:${String(plus5.getMinutes()).padStart(2, '0')}`,
+        cls: 'btn-time-now'
+    });
+
+    // 常用时段: 07:00 ~ 19:00, 每 30 分钟
+    for (let h = 7; h <= 19; h++) {
+        for (let m of [0, 30]) {
+            presets.push({
+                label: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+                value: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
+                cls: 'btn-time-preset'
+            });
+        }
+    }
+
+    let html = '';
+    presets.forEach(p => {
+        html += `<button type="button" class="btn-time ${p.cls}" data-time="${p.value}">${p.label}</button>`;
+    });
+    container.innerHTML = html;
+
+    // 点击事件委托
+    container.onclick = function (e) {
+        const btn = e.target.closest('.btn-time');
+        if (!btn) return;
+        const timeVal = btn.dataset.time;
+        document.getElementById('modalExamTime').value = timeVal;
+        updateExamTimePreview();
+        // 高亮选中
+        container.querySelectorAll('.btn-time').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+    };
+}
+
+function updateExamTimePreview() {
+    const preview = document.getElementById('modalExamTimePreview');
+    const dateVal = document.getElementById('modalExamDate').value;
+    const timeVal = document.getElementById('modalExamTime').value;
+    if (!preview) return;
+    if (!dateVal || !timeVal) {
+        preview.textContent = '请选择日期和时间';
+        preview.style.color = 'var(--text-muted)';
+        return;
+    }
+    const dt = new Date(`${dateVal}T${timeVal}:00`);
+    if (isNaN(dt.getTime())) {
+        preview.textContent = '时间格式无效';
+        preview.style.color = 'var(--warning-color)';
+        return;
+    }
+    const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    const wd = weekdays[dt.getDay()];
+    preview.textContent = `📅 ${dateVal} ${wd}  ${timeVal}  —  考试将在此时间开始`;
+    preview.style.color = 'var(--accent-color)';
+}
+
+function getExamStartDateTime() {
+    const dateVal = document.getElementById('modalExamDate').value;
+    const timeVal = document.getElementById('modalExamTime').value;
+    if (!dateVal || !timeVal) return '';
+    return `${dateVal}T${timeVal}:00`;
+}
+
+function getExamStartDateObject() {
+    const val = getExamStartDateTime();
+    if (!val) return null;
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
 }
 
 function toLocalDateTimeInputValue(date) {
@@ -410,10 +512,11 @@ async function loadExamFormOptions() {
     nodeSelect.innerHTML = '<option value="">加载中...</option>';
 
     try {
+        // 使用大 page_size 获取全部数据（不受默认分页20条限制），用于表单下拉选项
         const [roomsReq, usersReq, nodesReq] = await Promise.all([
-            requestJSON('/api/rooms'),
-            requestJSON('/api/users'),
-            requestJSON('/api/nodes')
+            requestJSON('/api/rooms?page_size=1000'),
+            requestJSON('/api/users?page_size=1000'),
+            requestJSON('/api/nodes?page_size=1000')
         ]);
 
         if (roomsReq.aborted || usersReq.aborted || nodesReq.aborted) return;
@@ -427,14 +530,28 @@ async function loadExamFormOptions() {
         const nodes = (nodesResult.data || []).map(normalizeEntity);
 
         roomSelect.innerHTML = rooms.length
-            ? rooms.map(r => `<option value="${r.id}">${escapeHtml(r.building)} / ${escapeHtml(r.name)}</option>`).join('')
+            ? (() => {
+                // 按楼栋分组
+                const groups = {};
+                rooms.forEach(r => {
+                    const bld = r.building || '未分类';
+                    if (!groups[bld]) groups[bld] = [];
+                    groups[bld].push(r);
+                });
+                return '<option value="">请选择教室</option>' + Object.keys(groups).sort().map(bld =>
+                    `<optgroup label="${escapeHtml(bld)}">` +
+                    groups[bld].map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('') +
+                    `</optgroup>`
+                ).join('');
+            })()
             : '<option value="">暂无教室</option>';
 
-        userSelect.innerHTML = users.length
-            ? users.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (${u.role === 'admin' ? '管理员' : '监考员'})</option>`).join('')
-            : '<option value="">暂无用户</option>';
+        const activeUsers = users.filter(u => u.status !== 'disabled');
+        userSelect.innerHTML = activeUsers.length
+            ? activeUsers.map(u => `<option value="${u.id}">${escapeHtml(u.username)} (${u.role === 'admin' ? '管理员' : '监考员'})</option>`).join('')
+            : '<option value="">暂无可用用户</option>';
 
-        const availableNodes = nodes.filter(n => n.status === 'idle' && !n.current_user_id);
+        const availableNodes = nodes.filter(n => n.status === 'idle' && !n.current_exam_id);
         nodeSelect.innerHTML = `<option value="">到点自动分配</option>${availableNodes
             .map(n => `<option value="${n.id}">${escapeHtml(n.name)} (${escapeHtml(n.address || '-')})</option>`)
             .join('')}`;
@@ -447,16 +564,46 @@ async function loadExamFormOptions() {
 }
 
 function openExamModal() {
-    const startInput = document.getElementById('modalExamStartTime');
     const minStart = getNextMinuteDate();
-    const minStartValue = toLocalDateTimeInputValue(minStart);
+
+    // 设置日期为今天（用本地日期，避免 toISOString 在 UTC+8 凌晨返回前一天）
+    const todayStr = `${minStart.getFullYear()}-${String(minStart.getMonth() + 1).padStart(2, '0')}-${String(minStart.getDate()).padStart(2, '0')}`;
+    document.getElementById('modalExamDate').value = todayStr;
+
+    // 设置时间为下一分钟
+    const timeVal = `${String(minStart.getHours()).padStart(2, '0')}:${String(minStart.getMinutes()).padStart(2, '0')}`;
+    document.getElementById('modalExamTime').value = timeVal;
+    document.getElementById('modalExamTime').min = timeVal;
 
     document.getElementById('modalExamName').value = '';
     document.getElementById('modalExamSubject').value = '';
-    startInput.min = minStartValue;
-    startInput.step = 60;
-    startInput.value = minStartValue;
     document.getElementById('modalExamDurationMinutes').value = '120';
+
+    // 构建时间快捷按钮
+    buildTimePresets();
+    // 高亮最近匹配的预设或"现在"按钮
+    setTimeout(() => {
+        const btns = document.querySelectorAll('#timePresets .btn-time');
+        btns.forEach(b => b.classList.remove('active'));
+        if (btns.length > 0) btns[0].classList.add('active');
+        updateExamTimePreview();
+    }, 50);
+
+    // 监听日期和时间变化，更新预览
+    document.getElementById('modalExamDate').onchange = function () {
+        const dateVal = this.value;
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const timeInput = document.getElementById('modalExamTime');
+        if (dateVal === today) {
+            const minStart = getNextMinuteDate();
+            timeInput.min = `${String(minStart.getHours()).padStart(2, '0')}:${String(minStart.getMinutes()).padStart(2, '0')}`;
+        } else {
+            timeInput.min = '00:00';
+        }
+        updateExamTimePreview();
+    };
+    document.getElementById('modalExamTime').onchange = updateExamTimePreview;
 
     loadExamFormOptions();
     document.getElementById('examModal').style.display = 'flex';
@@ -469,7 +616,7 @@ function closeExamModal() {
 async function submitExam() {
     const name = document.getElementById('modalExamName').value.trim();
     const subject = document.getElementById('modalExamSubject').value.trim();
-    const startTime = document.getElementById('modalExamStartTime').value;
+    const startTime = getExamStartDateTime();
     const durationMinutes = Number(document.getElementById('modalExamDurationMinutes').value);
     const roomId = Number(document.getElementById('modalExamRoom').value);
     const userId = Number(document.getElementById('modalExamUser').value);
@@ -480,9 +627,9 @@ async function submitExam() {
         return;
     }
 
-    const selectedStart = new Date(startTime);
+    const selectedStart = getExamStartDateObject();
     const minStart = getNextMinuteDate();
-    if (Number.isNaN(selectedStart.getTime()) || selectedStart < minStart) {
+    if (!selectedStart || Number.isNaN(selectedStart.getTime()) || selectedStart < minStart) {
         alert('开始时间最早只能选择当前时刻的下一分钟');
         return;
     }
@@ -492,7 +639,7 @@ async function submitExam() {
         subject,
         room_id: roomId,
         user_id: userId,
-        start_time: new Date(startTime).toISOString(),
+        start_time: selectedStart.toISOString(),
         duration_seconds: Math.round(durationMinutes * 60)
     };
     if (nodeVal) {
@@ -658,7 +805,7 @@ async function deleteAlert(alertId, examId) {
 async function populateHistoryFilters() {
     try {
         // 1. 抓取所有教室数据
-        const { result: roomsResult, aborted } = await requestJSON('/api/rooms');
+        const { result: roomsResult, aborted } = await requestJSON('/api/rooms?page_size=1000');
         if (aborted || !roomsResult) return;
         allHistoryRooms = (roomsResult.data || []).map(normalizeEntity);
 
@@ -1144,22 +1291,29 @@ async function logout() {
 }
 
 // --- 用户管理逻辑 ---
-async function fetchUsers() {
+async function fetchUsers(page = 1) {
     try {
-        const { response, result, aborted } = await requestJSON('/api/users'); // 匹配 main.go
+        currentUserPage = page;
+        const { response, result, aborted } = await requestJSON(`/api/users?page=${page}&page_size=${userPageSize}`);
         if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取用户列表');
-        const users = (result.data || []).map(normalizeEntity); // 兼容 id/ID 等字段
+        const users = (result.data || []).map(normalizeEntity);
+        const pagination = result.pagination || {};
 
         const tbody = document.getElementById('user-list-body');
         tbody.innerHTML = '';
+        const offset = (page - 1) * userPageSize;
         users.forEach((user, idx) => {
             const tr = document.createElement('tr');
-            // 注意：Go 返回的 JSON 字段名通常是大写开头的（Username, Role, ID, CreatedAt）
+            const isDisabled = user.status === 'disabled';
+            const statusBadge = isDisabled
+                ? '<span class="badge bg-secondary">已禁用</span>'
+                : '<span class="badge bg-success">正常</span>';
             tr.innerHTML = `
-            <td>${idx + 1}</td>
+            <td>${offset + idx + 1}</td>
                 <td>${user.username}</td>
                 <td><span class="badge ${user.role === 'admin' ? 'bg-danger' : 'bg-primary'}">${user.role === 'admin' ? '管理员' : '监考员'}</span></td>
+                <td>${statusBadge}</td>
                 <td>${formatDateTime(user.created_at)}</td>
                 <td>
                     <div style="display: flex; gap: 5px;">
@@ -1167,7 +1321,10 @@ async function fetchUsers() {
                             <i class="fa-solid fa-pen-to-square"></i> 编辑
                         </button>
                         ${user.username !== 'admin' ? `
-                            <button class="btn-table btn-delete" onclick="deleteUser(${user.id}, '${user.username}')">
+                            <button class="btn-table" onclick="toggleUserStatus(${user.id}, '${user.username}', ${isDisabled})" style="background: ${isDisabled ? 'var(--success-color)' : '#6c757d'}; color: white;">
+                                <i class="fa-solid ${isDisabled ? 'fa-toggle-on' : 'fa-toggle-off'}"></i> ${isDisabled ? '启用' : '禁用'}
+                            </button>
+                            <button class="btn-table btn-delete" onclick="forceDeleteUser(${user.id}, '${user.username}')">
                                 <i class="fa-solid fa-trash"></i> 删除
                             </button>
                         ` : ''}
@@ -1176,9 +1333,52 @@ async function fetchUsers() {
             `;
             tbody.appendChild(tr);
         });
+
+        // 渲染分页
+        renderUserPagination(pagination);
     } catch (err) {
         console.error('Fetch users error:', err);
     }
+}
+
+function renderUserPagination(pagination) {
+    const container = document.getElementById('user-pagination');
+    if (!container) return;
+
+    const { page = 1, total_page = 1, total = 0 } = pagination;
+
+    if (total_page <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '<div class="pagination">';
+    html += `<span class="page-info">共 ${total} 条，第 ${page}/${total_page} 页</span>`;
+
+    // 上一页
+    if (page > 1) {
+        html += `<button onclick="fetchUsers(${page - 1})">上一页</button>`;
+    }
+
+    // 页码
+    const startPage = Math.max(1, page - 2);
+    const endPage = Math.min(total_page, page + 2);
+
+    for (let i = startPage; i <= endPage; i++) {
+        if (i === page) {
+            html += `<button class="active">${i}</button>`;
+        } else {
+            html += `<button onclick="fetchUsers(${i})">${i}</button>`;
+        }
+    }
+
+    // 下一页
+    if (page < total_page) {
+        html += `<button onclick="fetchUsers(${page + 1})">下一页</button>`;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 // --- 统一弹窗逻辑 (新增/编辑) ---
@@ -1264,15 +1464,41 @@ async function submitUser() {
     }
 }
 
-async function deleteUser(id, username) {
-    if (!confirm(`确定要删除用户 "${username}" 吗？`)) return;
+async function toggleUserStatus(id, username, currentlyDisabled) {
+    const action = currentlyDisabled ? '启用' : '禁用';
+    if (!confirm(`确定要${action}用户 "${username}" 吗？`)) return;
 
     try {
-        const { response, result, aborted } = await requestJSON(`/api/users/${id}`, { method: 'DELETE' });
+        const newStatus = currentlyDisabled ? 'active' : 'disabled';
+        const response = await fetch(`/api/users/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+            alert(`${action}成功`);
+            fetchUsers();
+        } else {
+            alert(result.error || `${action}失败`);
+        }
+    } catch (err) {
+        alert('网络请求出错');
+    }
+}
+
+async function forceDeleteUser(id, username) {
+    if (!confirm(`【危险操作】\n\n确定要强制删除用户 "${username}" 吗？\n\n此操作将同时删除该用户的所有考试记录和告警数据，且不可恢复！`)) return;
+    if (!confirm(`请再次确认：真的要永久删除用户 "${username}" 及其所有关联数据吗？`)) return;
+
+    try {
+        const { response, result, aborted } = await requestJSON(`/api/users/${id}/force`, { method: 'DELETE' });
         if (aborted || !result) return;
 
         if (response.ok && result.success) {
-            alert('删除成功');
+            alert('用户已永久删除');
             fetchUsers();
         } else {
             alert(result.error || '删除失败');
@@ -1320,15 +1546,18 @@ fetchUserInfo();
 fetchRooms(); // 初始获取数据
 fetchExamsForConsole(); // 初始获取考试数据（总控制台）
 setInterval(fetchRooms, 10000); // 10秒同步一次考场数据
-setInterval(fetchNodes, 10000); // 10秒同步一次节点数据
+setInterval(() => fetchNodes(currentNodePage), 10000); // 10秒同步一次节点数据
 
 // --- 节点管理逻辑 ---
-async function fetchNodes() {
+
+async function fetchNodes(page = 1) {
     try {
-        const { response, result, aborted } = await requestJSON('/api/nodes');
+        currentNodePage = page;
+        const { response, result, aborted } = await requestJSON(`/api/nodes?page=${page}&page_size=${nodePageSize}`);
         if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取节点列表');
         const nodes = (result.data || []).map(normalizeEntity);
+        const pagination = result.pagination || {};
 
         // 获取精确统计数据
         const { result: statsResult, aborted: statsAborted } = await requestJSON('/api/nodes/stats');
@@ -1343,8 +1572,9 @@ async function fetchNodes() {
         // 渲染表格
         const tbody = document.getElementById('node-list-body');
         tbody.innerHTML = '';
+        const offset = (page - 1) * nodePageSize;
         nodes.forEach((node, idx) => {
-            const isOccupied = !!node.current_user_id || !!node.current_exam_id || node.status === 'busy';
+            const isOccupied = !!node.current_exam_id || node.status === 'busy';
             // 细化状态显示
             let statusClass = 'bg-primary';
             let statusText = '空闲可用';
@@ -1365,7 +1595,7 @@ async function fetchNodes() {
 
             const tr = document.createElement('tr');
             tr.innerHTML = `
-                <td>${idx + 1}</td>
+                <td>${offset + idx + 1}</td>
                 <td>
                     <a href="#" onclick="jumpToNode(${node.id}); return false;" style="color: var(--accent-color); text-decoration: none;">
                         ${node.name}
@@ -1393,9 +1623,49 @@ async function fetchNodes() {
             `;
             tbody.appendChild(tr);
         });
+
+        // 渲染分页控件
+        renderNodePagination(pagination);
     } catch (err) {
         console.error('Fetch nodes error:', err);
     }
+}
+
+function renderNodePagination(pagination) {
+    const container = document.getElementById('node-pagination');
+    if (!container) return;
+
+    const { page = 1, total_page = 1, total = 0 } = pagination;
+    const totalPage = total_page || Math.ceil(total / nodePageSize) || 1;
+
+    if (totalPage <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '<div class="pagination">';
+    html += `<span class="page-info">共 ${total} 条，第 ${page}/${totalPage} 页</span>`;
+
+    if (page > 1) {
+        html += `<button onclick="fetchNodes(${page - 1})">上一页</button>`;
+    }
+
+    const startPage = Math.max(1, page - 2);
+    const endPage = Math.min(totalPage, page + 2);
+
+    for (let i = startPage; i <= endPage; i++) {
+        if (i === page) {
+            html += `<button class="active">${i}</button>`;
+        } else {
+            html += `<button onclick="fetchNodes(${i})">${i}</button>`;
+        }
+    }
+
+    if (page < totalPage) {
+        html += `<button onclick="fetchNodes(${page + 1})">下一页</button>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 function openNodeModal(mode, nodeData = null) {
@@ -1436,21 +1706,42 @@ function closeNodeModal() {
 function copyToken() {
     const tokenInput = document.getElementById('modalNodeToken');
     const toast = document.getElementById('copyToast');
+    const text = tokenInput.value;
 
-    tokenInput.select();
-    tokenInput.setSelectionRange(0, 99999);
-
-    navigator.clipboard.writeText(tokenInput.value).then(() => {
-        showCopyToast(toast);
-    }).catch(err => {
-        console.error('无法复制: ', err);
-        try {
-            document.execCommand('copy');
+    // 方式 1: Clipboard API
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => {
             showCopyToast(toast);
-        } catch (e) {
-            console.error('复制失败');
-        }
-    });
+        }).catch(() => {
+            fallbackCopy(text, toast);
+        });
+    } else {
+        fallbackCopy(text, toast);
+    }
+}
+
+function fallbackCopy(text, toast) {
+    // 方式 2: 用临时 textarea 执行 copy 命令
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+        document.execCommand('copy');
+        showCopyToast(toast);
+    } catch (e) {
+        console.error('复制失败', e);
+        // 方式 3: 最后兜底 — 选中文本让用户手动 Ctrl+C
+        const tokenInput = document.getElementById('modalNodeToken');
+        tokenInput.type = 'text';  // 确保可选中
+        tokenInput.focus();
+        tokenInput.select();
+    }
+    document.body.removeChild(ta);
 }
 
 function showCopyToast(toast) {
@@ -1635,9 +1926,12 @@ async function syncRooms() {
         const { result, aborted } = await requestJSON('/api/sync/rooms', { method: 'POST' });
         if (aborted || !result) return;
         if (result.success) {
-            alert('教室信息同步指令已发送');
+            const extra = result.skipped_nodes?.length ? `（跳过 ${result.skipped_nodes.length} 个未上线节点）` : '';
+            alert(result.message || '教室信息同步成功' + extra);
         } else {
-            alert('同步失败: ' + (result.error || result.message));
+            const errorList = result.errors?.length ? '\n\n失败详情:\n' + result.errors.join('\n') : '';
+            const skipped = result.skipped_nodes?.length ? `\n跳过 ${result.skipped_nodes.length} 个未上线节点` : '';
+            alert((result.message || '同步失败') + skipped + errorList);
         }
     } catch (err) {
         alert('网络请求出错');
@@ -1645,25 +1939,29 @@ async function syncRooms() {
 }
 
 // --- 教室管理逻辑 ---
-async function fetchRooms() {
+
+async function fetchRooms(page = 1) {
     try {
-        const { response, result, aborted } = await requestJSON('/api/rooms');
+        currentRoomPage = page;
+        const { response, result, aborted } = await requestJSON(`/api/rooms?page=${page}&page_size=${roomPageSize}`);
         if (aborted || !result) return;
         if (!response.ok) throw new Error('无法获取教室列表');
         const rooms = (result.data || []).map(normalizeEntity);
+        const pagination = result.pagination || {};
 
         // 更新统计面板
         const buildings = [...new Set(rooms.map(r => r.building))];
-        document.getElementById('room-total-count').innerText = rooms.length;
+        document.getElementById('room-total-count').innerText = pagination.total || rooms.length;
         document.getElementById('room-building-count').innerText = buildings.length;
 
         // 渲染表格
         const tbody = document.getElementById('classroom-list-body');
         tbody.innerHTML = '';
+        const offset = (page - 1) * roomPageSize;
         rooms.forEach((room, idx) => {
             const tr = document.createElement('tr');
             tr.innerHTML = `
-            <td>${idx + 1}</td>
+            <td>${offset + idx + 1}</td>
                 <td>${room.building}</td>
                 <td>${room.name}</td>
                 <td>${room.type || '-'}</td>
@@ -1682,9 +1980,52 @@ async function fetchRooms() {
             `;
             tbody.appendChild(tr);
         });
+
+        // 渲染分页
+        renderRoomPagination(pagination);
     } catch (err) {
         console.error('Fetch rooms error:', err);
     }
+}
+
+function renderRoomPagination(pagination) {
+    const container = document.getElementById('room-pagination');
+    if (!container) return;
+
+    const { page = 1, total_page = 1, total = 0 } = pagination;
+
+    if (total_page <= 1) {
+        container.innerHTML = '';
+        return;
+    }
+
+    let html = '<div class="pagination">';
+    html += `<span class="page-info">共 ${total} 条，第 ${page}/${total_page} 页</span>`;
+
+    // 上一页
+    if (page > 1) {
+        html += `<button onclick="fetchRooms(${page - 1})">上一页</button>`;
+    }
+
+    // 页码
+    const startPage = Math.max(1, page - 2);
+    const endPage = Math.min(total_page, page + 2);
+
+    for (let i = startPage; i <= endPage; i++) {
+        if (i === page) {
+            html += `<button class="active">${i}</button>`;
+        } else {
+            html += `<button onclick="fetchRooms(${i})">${i}</button>`;
+        }
+    }
+
+    // 下一页
+    if (page < total_page) {
+        html += `<button onclick="fetchRooms(${page + 1})">下一页</button>`;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 function openRoomModal(mode, roomData = null) {
@@ -1776,3 +2117,52 @@ async function deleteRoom(id, name) {
         alert('网络请求出错');
     }
 }
+// --- 静默自动刷新 ---
+let currentActiveTab = 'console';
+
+// 更新 switchTab 以跟踪当前页面
+const originalSwitchTab = switchTab;
+window.switchTab = function(pageId, navElement) {
+    currentActiveTab = pageId;
+    originalSwitchTab(pageId, navElement);
+    
+    // 切换页面时立即刷新数据
+    refreshCurrentPage();
+}
+
+// 静默刷新当前页面的数据
+function refreshCurrentPage() {
+    if (document.hidden) return; // 页面不可见时不刷新
+    
+    switch(currentActiveTab) {
+        case 'console':
+            fetchExamsForConsole();
+            break;
+        case 'node-mgmt':
+            fetchNodes();
+            break;
+        case 'user-mgmt':
+            // fetchUsers() 已有分页，不需要额外刷新
+            break;
+        case 'room-mgmt':
+            fetchRooms();
+            break;
+        case 'exam-mgmt':
+            fetchExamManagement();
+            break;
+        case 'history':
+            // 历史数据不需要自动刷新
+            break;
+    }
+}
+
+// 每30秒静默刷新当前页面
+setInterval(refreshCurrentPage, 30000);
+
+// 页面可见性变化时刷新
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        refreshCurrentPage();
+    }
+});
+

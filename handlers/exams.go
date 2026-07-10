@@ -113,10 +113,8 @@ func CreateExam(c *gin.Context) {
 			result := tx.Model(&models.Node{}).
 				Where("id = ? AND current_exam_id IS NULL", *input.NodeID).
 				Updates(map[string]any{
-					"status":                   models.NodeStatusBusy,
-					"current_exam_id":          exam.ID,
-					"current_user_id":          input.UserID,
-					"current_user_occupied_at": time.Now(),
+					"status":          models.NodeStatusBusy,
+					"current_exam_id": exam.ID,
 				})
 			if result.Error != nil {
 				return result.Error
@@ -164,10 +162,8 @@ func DeleteExam(c *gin.Context) {
 		if err := tx.Model(&models.Node{}).
 			Where("current_exam_id = ?", exam.ID).
 			Updates(map[string]any{
-				"status":                   models.NodeStatusIdle,
-				"current_exam_id":          nil,
-				"current_user_id":          nil,
-				"current_user_occupied_at": nil,
+				"status":          models.NodeStatusIdle,
+				"current_exam_id": nil,
 			}).Error; err != nil {
 			return err
 		}
@@ -296,8 +292,9 @@ func UpdateExam(c *gin.Context) {
 		return
 	}
 
-	// 重新加载关联数据
-	models.DB.Preload("Room").Preload("Node").Preload("User").First(&exam, uint(idUint))
+	// 重新加载考试和关联数据
+	models.DB.First(&exam, uint(idUint))
+	loadExamAssociations(&exam, true, true, true)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": toExamPayload(exam)})
 }
 
@@ -309,10 +306,13 @@ func GetExams(c *gin.Context) {
 	}
 	var exam models.Exam
 
-	if err := models.DB.Preload("Room").Preload("Node").Preload("User").First(&exam, uint(idUint)).Error; err != nil {
+	if err := models.DB.First(&exam, uint(idUint)).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "考试不存在"})
 		return
 	}
+
+	// 加载关联数据
+	loadExamAssociations(&exam, true, true, true)
 
 	var anomaliesCount int64
 	models.DB.Model(&models.Alert{}).Where("exam_id = ?", exam.ID).Count(&anomaliesCount)
@@ -381,8 +381,11 @@ func GetExams(c *gin.Context) {
 }
 
 func ListExams(c *gin.Context) {
+	// 分页参数
+	page, pageSize := parsePaginationParams(c)
+
 	var exams []models.Exam
-	query := models.DB.Preload("Room").Preload("Node").Preload("User")
+	query := models.DB.Model(&models.Exam{})
 
 	// 失败记录默认可见，便于在考试管理与数据回溯定位问题。
 	// 仅在显式传 exclude_failed=true/1 时过滤失败状态。
@@ -424,9 +427,23 @@ func ListExams(c *gin.Context) {
 		query = query.Where("date(exams.start_time) = ?", date)
 	}
 
-	if err := query.Order("exams.id desc").Find(&exams).Error; err != nil {
+	// 获取总数
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取考试总数失败"})
+		return
+	}
+
+	// 分页查询
+	offset := (page - 1) * pageSize
+	if err := query.Order("exams.id desc").Offset(offset).Limit(pageSize).Find(&exams).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取考试列表失败"})
 		return
+	}
+
+	// 加载关联数据
+	for i := range exams {
+		loadExamAssociations(&exams[i], true, true, true)
 	}
 
 	result := make([]examPayload, 0, len(exams))
@@ -434,16 +451,22 @@ func ListExams(c *gin.Context) {
 		result = append(result, toExamPayload(exam))
 	}
 
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    result,
+		"pagination": gin.H{
+			"page":       page,
+			"page_size":  pageSize,
+			"total":      total,
+			"total_page": (total + int64(pageSize) - 1) / int64(pageSize),
+		},
+	})
 }
 
 func GetExamStats(c *gin.Context) {
 	// 以考试表为准获取进行中考试，避免依赖节点缓存字段导致遗漏。
 	var ongoingExams []models.Exam
 	if err := models.DB.Where("end_time IS NULL AND schedule_status = ?", models.ExamScheduleRunning).
-		Preload("Room").
-		Preload("Node").
-		Preload("User").
 		Order("start_time asc, id asc").
 		Find(&ongoingExams).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": "获取考试数据失败"})
@@ -492,16 +515,17 @@ func GetExamStats(c *gin.Context) {
 		anomalyCoeff = float64(totalAnomalies) / float64(totalStudents)
 	}
 
-	// 为每个考试统计异常数
+	// 加载关联数据并转换为 payload，确保 Room/Node 序列化到 JSON
 	type ExamWithAnomalies struct {
-		models.Exam
+		examPayload
 		AnomaliesCount int64 `json:"anomalies_count"`
 	}
 
 	examsWithAnomalies := make([]ExamWithAnomalies, 0, len(ongoingExams))
 	for _, exam := range ongoingExams {
+		loadExamAssociations(&exam, true, true, false) // 加载 Room 和 Node
 		examsWithAnomalies = append(examsWithAnomalies, ExamWithAnomalies{
-			Exam:           exam,
+			examPayload:    toExamPayload(exam),
 			AnomaliesCount: alertCounts[exam.ID],
 		})
 	}
@@ -532,10 +556,12 @@ func RetryAssignAndNotifyExam(c *gin.Context) {
 	}
 
 	var exam models.Exam
-	if err := models.DB.Preload("Room").Preload("Node").Preload("User").First(&exam, uint(id)).Error; err != nil {
+	if err := models.DB.First(&exam, uint(id)).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"success": false, "error": "考试不存在"})
 		return
 	}
+
+	loadExamAssociations(&exam, true, true, true)
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": toExamPayload(exam)})
 }
@@ -570,10 +596,8 @@ func EndExam(c *gin.Context) {
 			if err := tx.Model(&models.Node{}).
 				Where("id = ? AND current_exam_id = ?", *exam.NodeID, exam.ID).
 				Updates(map[string]any{
-					"status":                   models.NodeStatusIdle,
-					"current_exam_id":          nil,
-					"current_user_id":          nil,
-					"current_user_occupied_at": nil,
+					"status":          models.NodeStatusIdle,
+					"current_exam_id": nil,
 				}).Error; err != nil {
 				return err
 			}

@@ -1,7 +1,7 @@
 package models
 
 import (
-	"gorm.io/gorm"
+	"time"
 )
 
 type UserRole string
@@ -11,15 +11,18 @@ const (
 	Proctor UserRole = "proctor"
 )
 
+const (
+	UserStatusActive   = "active"
+	UserStatusDisabled = "disabled"
+)
+
 type User struct {
-	gorm.Model
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time `gorm:"not null" json:"created_at"`
+	UpdatedAt time.Time `gorm:"not null" json:"updated_at"`
 
-	// Username 登录名，要求唯一。
-	Username string `gorm:"not null;unique" json:"username"`
-
-	// Password 密码哈希（不会通过 JSON 输出）。
-	Password string `gorm:"not null" json:"-"`
-
-	// Role 用户角色。
-	Role UserRole `gorm:"default:'proctor'" json:"role"`
+	Username string   `gorm:"not null;unique" json:"username"`
+	Password string   `gorm:"not null" json:"-"`
+	Role     UserRole `gorm:"default:'proctor'" json:"role"`
+	Status   string   `gorm:"default:'active'" json:"status"`
 }

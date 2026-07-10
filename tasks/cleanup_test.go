@@ -9,327 +9,365 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupCleanupTestDB(t *testing.T) *gorm.DB {
+func setupCleanupTestDB(t *testing.T) func() {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
-		t.Fatalf("failed to connect test db: %v", err)
+		t.Fatalf("failed to open test db: %v", err)
 	}
-	if err := db.AutoMigrate(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{}); err != nil {
-		t.Fatalf("failed to migrate test db: %v", err)
-	}
+
 	models.DB = db
-	return db
+
+	if err := db.AutoMigrate(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+
+	return func() {
+		sqlDB, _ := db.DB()
+		sqlDB.Close()
+	}
 }
 
-func TestCleanupStaleNodes_IdleToOffline(t *testing.T) {
-	db := setupCleanupTestDB(t)
-	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
-
-	user := models.User{Username: "u1", Password: "p", Role: "proctor"}
-	room := models.Room{Name: "r1", Building: "b1", RTSPUrl: "rtsp://x"}
-	if err := db.Create(&user).Error; err != nil {
-		t.Fatalf("create user failed: %v", err)
+func seedCleanupUser(t *testing.T) models.User {
+	user := models.User{Username: "cleanup-user", Password: "hashed", Role: "admin", Status: "active"}
+	if err := models.DB.Create(&user).Error; err != nil {
+		t.Fatalf("failed to seed user: %v", err)
 	}
-	if err := db.Create(&room).Error; err != nil {
-		t.Fatalf("create room failed: %v", err)
-	}
+	return user
+}
 
+func seedCleanupRoom(t *testing.T) models.Room {
+	room := models.Room{Name: "cleanup-room", Building: "A", RTSPUrl: "rtsp://test"}
+	if err := models.DB.Create(&room).Error; err != nil {
+		t.Fatalf("failed to seed room: %v", err)
+	}
+	return room
+}
+
+func seedCleanupNode(t *testing.T, name, status string, lastHeartbeatAt, leaseExpiresAt time.Time) models.Node {
 	node := models.Node{
-		Name:                  "n1",
-		Token:                 "t1",
-		NodeModel:             "m1",
-		Address:               "127.0.0.1:8002",
-		Status:                models.NodeStatusIdle,
-		Version:               "1.0.0",
-		CurrentUserID:         &user.ID,
-		CurrentUserOccupiedAt: ptrTime(time.Now().Add(-3 * time.Minute)),
-		LastHeartbeatAt:       time.Now().Add(-3 * time.Minute),
+		Name:            name,
+		Token:           "token-" + name,
+		NodeModel:       "Standard",
+		Address:         "192.168.1.100:8002",
+		Status:          status,
+		LastHeartbeatAt: lastHeartbeatAt,
+		LeaseExpiresAt:  leaseExpiresAt,
 	}
-	if err := db.Create(&node).Error; err != nil {
-		t.Fatalf("create node failed: %v", err)
+	if err := models.DB.Create(&node).Error; err != nil {
+		t.Fatalf("failed to seed node: %v", err)
 	}
-
-	cleanupStaleNodes()
-
-	var refreshed models.Node
-	if err := db.First(&refreshed, node.ID).Error; err != nil {
-		t.Fatalf("reload node failed: %v", err)
-	}
-	if refreshed.Status != models.NodeStatusOffline {
-		t.Fatalf("expected node status offline, got %s", refreshed.Status)
-	}
-	if refreshed.CurrentUserID != nil {
-		t.Fatal("expected current_user_id to be cleared on idle->offline")
-	}
-	if refreshed.CurrentUserOccupiedAt != nil {
-		t.Fatal("expected current_user_occupied_at to be cleared on idle->offline")
-	}
+	return node
 }
 
-func TestCleanupStaleNodes_BusyNoExamReleases(t *testing.T) {
-	db := setupCleanupTestDB(t)
-	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+// TestCheckExpiredLeases 测试租约过期检测
+func TestCheckExpiredLeases(t *testing.T) {
+	t.Run("lease_expired_with_running_exam", func(t *testing.T) {
+		cleanup := setupCleanupTestDB(t)
+		defer cleanup()
 
-	user := models.User{Username: "u2", Password: "p", Role: "proctor"}
-	room := models.Room{Name: "r2", Building: "b1", RTSPUrl: "rtsp://x"}
-	if err := db.Create(&user).Error; err != nil {
-		t.Fatalf("create user failed: %v", err)
-	}
-	if err := db.Create(&room).Error; err != nil {
-		t.Fatalf("create room failed: %v", err)
-	}
+		user := seedCleanupUser(t)
+		room := seedCleanupRoom(t)
 
-	node := models.Node{
-		Name:                  "n2",
-		Token:                 "t2",
-		NodeModel:             "m1",
-		Address:               "127.0.0.1:8002",
-		Status:                models.NodeStatusBusy,
-		Version:               "1.0.0",
-		CurrentUserID:         &user.ID,
-		CurrentUserOccupiedAt: ptrTime(time.Now().Add(-3 * time.Minute)),
-		LastHeartbeatAt:       time.Now(),
-	}
-	if err := db.Create(&node).Error; err != nil {
-		t.Fatalf("create node failed: %v", err)
-	}
+		// 绕过启动宽限期
+		cleanupStartedAt = time.Now().Add(-5 * time.Minute)
 
-	cleanupStaleNodes()
+		// 创建租约和心跳均已过期的节点（双重条件）
+		node := seedCleanupNode(t, "expired-node", models.NodeStatusBusy,
+			time.Now().Add(-3*time.Minute),  // last_heartbeat_at 过期
+			time.Now().Add(-1*time.Minute))  // lease_expires_at 过期
 
-	var refreshed models.Node
-	if err := db.First(&refreshed, node.ID).Error; err != nil {
-		t.Fatalf("reload node failed: %v", err)
-	}
-	if refreshed.Status != models.NodeStatusIdle {
-		t.Fatalf("expected node status idle, got %s", refreshed.Status)
-	}
-	if refreshed.CurrentUserID != nil {
-		t.Fatal("expected current_user_id to be cleared on busy-no-exam release")
-	}
-	if refreshed.CurrentUserOccupiedAt != nil {
-		t.Fatal("expected current_user_occupied_at to be cleared on busy-no-exam release")
-	}
+		// 创建进行中的考试
+		exam := models.Exam{
+			Name:            "running-exam",
+			Subject:         "math",
+			RoomID:          room.ID,
+			UserID:          user.ID,
+			NodeID:          &node.ID,
+			StartTime:       time.Now().Add(-30 * time.Minute),
+			DurationSeconds: 7200,
+			ScheduleStatus:  models.ExamScheduleRunning,
+		}
+		models.DB.Create(&exam)
+
+		// 更新节点关联考试
+		models.DB.Model(&node).Update("current_exam_id", exam.ID)
+
+		// 运行清理
+		checkExpiredLeases()
+
+		// 验证考试已关闭
+		var reloadedExam models.Exam
+		models.DB.First(&reloadedExam, exam.ID)
+
+		if reloadedExam.EndTime == nil {
+			t.Error("expected exam to be closed")
+		}
+		if reloadedExam.ScheduleStatus != models.ExamScheduleInterrupted {
+			t.Errorf("expected status interrupted, got %s", reloadedExam.ScheduleStatus)
+		}
+
+		// 验证节点已释放
+		var reloadedNode models.Node
+		models.DB.First(&reloadedNode, node.ID)
+
+		if reloadedNode.CurrentExamID != nil {
+			t.Error("expected current_exam_id to be nil")
+		}
+		if reloadedNode.Status != models.NodeStatusOffline {
+			t.Errorf("expected status offline, got %s", reloadedNode.Status)
+		}
+
+		// 验证创建了告警
+		var alertCount int64
+		models.DB.Model(&models.Alert{}).Where("exam_id = ? AND type = ?", exam.ID, "node_lease_expired").Count(&alertCount)
+		if alertCount != 1 {
+			t.Errorf("expected 1 alert, got %d", alertCount)
+		}
+	})
+
+	t.Run("lease_not_expired", func(t *testing.T) {
+		cleanup := setupCleanupTestDB(t)
+		defer cleanup()
+
+		user := seedCleanupUser(t)
+		room := seedCleanupRoom(t)
+
+		// 创建租约未过期的节点
+		node := seedCleanupNode(t, "active-node", models.NodeStatusBusy, time.Now(), time.Now().Add(1*time.Minute))
+
+		// 创建进行中的考试
+		exam := models.Exam{
+			Name:            "running-exam",
+			Subject:         "math",
+			RoomID:          room.ID,
+			UserID:          user.ID,
+			NodeID:          &node.ID,
+			StartTime:       time.Now().Add(-30 * time.Minute),
+			DurationSeconds: 7200,
+			ScheduleStatus:  models.ExamScheduleRunning,
+		}
+		models.DB.Create(&exam)
+		models.DB.Model(&node).Update("current_exam_id", exam.ID)
+
+		// 运行清理
+		checkExpiredLeases()
+
+		// 验证考试未关闭
+		var reloadedExam models.Exam
+		models.DB.First(&reloadedExam, exam.ID)
+
+		if reloadedExam.EndTime != nil {
+			t.Error("expected exam to still be running")
+		}
+
+		// 验证节点未变化
+		var reloadedNode models.Node
+		models.DB.First(&reloadedNode, node.ID)
+
+		if reloadedNode.CurrentExamID == nil || *reloadedNode.CurrentExamID != exam.ID {
+			t.Error("expected current_exam_id to remain set")
+		}
+	})
 }
 
-func TestCleanupStaleOfflineRunningNode_TerminatesExam(t *testing.T) {
-	db := setupCleanupTestDB(t)
-	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+// TestCloseExpiredExams 测试考试超时自动关闭
+func TestCloseExpiredExams(t *testing.T) {
+	t.Run("exam_expired_beyond_grace_period", func(t *testing.T) {
+		cleanup := setupCleanupTestDB(t)
+		defer cleanup()
 
-	user := models.User{Username: "u3", Password: "p", Role: "proctor"}
-	room := models.Room{Name: "r3", Building: "b1", RTSPUrl: "rtsp://x"}
-	if err := db.Create(&user).Error; err != nil {
-		t.Fatalf("create user failed: %v", err)
-	}
-	if err := db.Create(&room).Error; err != nil {
-		t.Fatalf("create room failed: %v", err)
-	}
+		user := seedCleanupUser(t)
+		room := seedCleanupRoom(t)
+		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now(), time.Now().Add(1*time.Minute))
 
-	node := models.Node{
-		Name:            "n3",
-		Token:           "t3",
-		NodeModel:       "m1",
-		Address:         "127.0.0.1:8002",
-		Status:          models.NodeStatusBusy,
-		Version:         "1.0.0",
-		LastHeartbeatAt: time.Now(),
-	}
-	if err := db.Create(&node).Error; err != nil {
-		t.Fatalf("create node failed: %v", err)
-	}
+		// 创建超时的考试（开始于 2 小时前，时长 1 小时）
+		exam := models.Exam{
+			Name:            "expired-exam",
+			Subject:         "math",
+			RoomID:          room.ID,
+			UserID:          user.ID,
+			NodeID:          &node.ID,
+			StartTime:       time.Now().Add(-2 * time.Hour),
+			DurationSeconds: 3600, // 1 小时
+			ScheduleStatus:  models.ExamScheduleRunning,
+		}
+		models.DB.Create(&exam)
+		models.DB.Model(&node).Update("current_exam_id", exam.ID)
 
-	nodeID := node.ID
-	exam := models.Exam{
-		Name:            "e3",
-		Subject:         "physics",
-		RoomID:          room.ID,
-		NodeID:          &nodeID,
-		UserID:          user.ID,
-		DurationSeconds: 3600,
-		StartTime:       time.Now().Add(-2 * time.Minute),
-		ScheduleStatus:  models.ExamScheduleRunning,
-	}
-	if err := db.Create(&exam).Error; err != nil {
-		t.Fatalf("create exam failed: %v", err)
-	}
+		// 运行清理
+		closeExpiredExams()
 
-	if err := db.Model(&models.Node{}).
-		Where("id = ?", node.ID).
-		Updates(map[string]any{
-			"current_exam_id":          exam.ID,
-			"current_user_id":          user.ID,
-			"current_user_occupied_at": time.Now().Add(-3 * time.Minute),
-		}).Error; err != nil {
-		t.Fatalf("bind node occupation failed: %v", err)
-	}
+		// 验证考试已关闭
+		var reloadedExam models.Exam
+		models.DB.First(&reloadedExam, exam.ID)
 
-	staleHeartbeat := time.Now().Add(-3 * time.Minute)
-	if err := db.Exec("UPDATE nodes SET last_heartbeat_at = ? WHERE id = ?", staleHeartbeat, node.ID).Error; err != nil {
-		t.Fatalf("set stale heartbeat failed: %v", err)
-	}
+		if reloadedExam.EndTime == nil {
+			t.Error("expected exam to be closed")
+		}
+		if reloadedExam.ScheduleStatus != models.ExamScheduleAutoClosed {
+			t.Errorf("expected status auto_closed, got %s", reloadedExam.ScheduleStatus)
+		}
 
-	// case3: 运行中节点掉线（busy 且无心跳）
-	// 期望：节点先被置为 offline 并清理占用，随后关联运行中考试被自动终止并写入掉线原因。
-	cleanupStaleNodes()
-	cleanupStaleExams()
+		// 验证节点已释放
+		var reloadedNode models.Node
+		models.DB.First(&reloadedNode, node.ID)
 
-	var refreshedNode models.Node
-	if err := db.First(&refreshedNode, node.ID).Error; err != nil {
-		t.Fatalf("reload node failed: %v", err)
-	}
-	if refreshedNode.Status != models.NodeStatusOffline {
-		t.Fatalf("expected node status offline, got %s", refreshedNode.Status)
-	}
-	if refreshedNode.CurrentExamID != nil {
-		t.Fatal("expected current_exam_id to be cleared")
-	}
-	if refreshedNode.CurrentUserID != nil {
-		t.Fatal("expected current_user_id to be cleared")
-	}
+		if reloadedNode.CurrentExamID != nil {
+			t.Error("expected current_exam_id to be nil")
+		}
+		if reloadedNode.Status != models.NodeStatusIdle {
+			t.Errorf("expected status idle, got %s", reloadedNode.Status)
+		}
+	})
 
-	var refreshedExam models.Exam
-	if err := db.First(&refreshedExam, exam.ID).Error; err != nil {
-		t.Fatalf("reload exam failed: %v", err)
-	}
-	if refreshedExam.EndTime == nil {
-		t.Fatal("expected running exam to be terminated")
-	}
-	if refreshedExam.ScheduleError != "由于节点掉线自动终止" {
-		t.Fatalf("expected schedule_error to be offline reason, got %q", refreshedExam.ScheduleError)
-	}
+	t.Run("exam_within_grace_period", func(t *testing.T) {
+		cleanup := setupCleanupTestDB(t)
+		defer cleanup()
+
+		user := seedCleanupUser(t)
+		room := seedCleanupRoom(t)
+		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now(), time.Now().Add(1*time.Minute))
+
+		// 创建刚超过时长的考试（在宽限期内）
+		exam := models.Exam{
+			Name:            "recent-exam",
+			Subject:         "math",
+			RoomID:          room.ID,
+			UserID:          user.ID,
+			NodeID:          &node.ID,
+			StartTime:       time.Now().Add(-65 * time.Minute),
+			DurationSeconds: 3600, // 1 小时
+			ScheduleStatus:  models.ExamScheduleRunning,
+		}
+		models.DB.Create(&exam)
+		models.DB.Model(&node).Update("current_exam_id", exam.ID)
+
+		// 运行清理
+		closeExpiredExams()
+
+		// 验证考试未关闭（仍在宽限期内）
+		var reloadedExam models.Exam
+		models.DB.First(&reloadedExam, exam.ID)
+
+		if reloadedExam.EndTime != nil {
+			t.Error("expected exam to still be running (within grace period)")
+		}
+	})
 }
 
-func TestCleanupStaleExams_NoNodeLinkageTerminatesExam(t *testing.T) {
-	db := setupCleanupTestDB(t)
-	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+// TestCleanOrphanData 测试清理孤儿数据
+func TestCleanOrphanData(t *testing.T) {
+	t.Run("idle_node_with_current_exam_id", func(t *testing.T) {
+		cleanup := setupCleanupTestDB(t)
+		defer cleanup()
 
-	user := models.User{Username: "u4", Password: "p", Role: "proctor"}
-	room := models.Room{Name: "r4", Building: "b1", RTSPUrl: "rtsp://x"}
-	if err := db.Create(&user).Error; err != nil {
-		t.Fatalf("create user failed: %v", err)
-	}
-	if err := db.Create(&room).Error; err != nil {
-		t.Fatalf("create room failed: %v", err)
-	}
+		user := seedCleanupUser(t)
+		room := seedCleanupRoom(t)
+		node := seedCleanupNode(t, "idle-node", models.NodeStatusIdle, time.Now(), time.Now().Add(1*time.Minute))
 
-	// 覆盖僵尸场景：运行中考试没有节点关联，cleanup 需要主动收敛。
-	exam := models.Exam{
-		Name:            "e4",
-		Subject:         "chemistry",
-		RoomID:          room.ID,
-		NodeID:          nil,
-		UserID:          user.ID,
-		DurationSeconds: 3600,
-		StartTime:       time.Now().Add(-5 * time.Minute),
-		ScheduleStatus:  models.ExamScheduleRunning,
-	}
-	if err := db.Create(&exam).Error; err != nil {
-		t.Fatalf("create exam failed: %v", err)
-	}
+		// 创建考试
+		exam := models.Exam{
+			Name:            "test-exam",
+			Subject:         "math",
+			RoomID:          room.ID,
+			UserID:          user.ID,
+			StartTime:       time.Now(),
+			DurationSeconds: 3600,
+			ScheduleStatus:  models.ExamScheduleRunning,
+		}
+		models.DB.Create(&exam)
 
-	cleanupStaleExams()
+		// 节点是 idle 但有 current_exam_id（孤儿数据）
+		models.DB.Model(&node).Update("current_exam_id", exam.ID)
 
-	var refreshedExam models.Exam
-	if err := db.First(&refreshedExam, exam.ID).Error; err != nil {
-		t.Fatalf("reload exam failed: %v", err)
-	}
-	if refreshedExam.EndTime == nil {
-		t.Fatal("expected running exam without node linkage to be terminated")
-	}
-	if refreshedExam.ScheduleError != "由于节点关联缺失自动终止" {
-		t.Fatalf("expected schedule_error to be missing-link reason, got %q", refreshedExam.ScheduleError)
-	}
+		// 运行清理
+		cleanOrphanData()
+
+		// 验证 current_exam_id 已清空
+		var reloadedNode models.Node
+		models.DB.First(&reloadedNode, node.ID)
+
+		if reloadedNode.CurrentExamID != nil {
+			t.Error("expected current_exam_id to be cleared")
+		}
+	})
+
+	t.Run("node_pointing_to_ended_exam", func(t *testing.T) {
+		cleanup := setupCleanupTestDB(t)
+		defer cleanup()
+
+		user := seedCleanupUser(t)
+		room := seedCleanupRoom(t)
+		node := seedCleanupNode(t, "test-node", models.NodeStatusBusy, time.Now(), time.Now().Add(1*time.Minute))
+
+		// 创建已结束的考试
+		endTime := time.Now().Add(-5 * time.Minute)
+		exam := models.Exam{
+			Name:            "ended-exam",
+			Subject:         "math",
+			RoomID:          room.ID,
+			UserID:          user.ID,
+			StartTime:       time.Now().Add(-2 * time.Hour),
+			EndTime:         &endTime,
+			DurationSeconds: 3600,
+			ScheduleStatus:  models.ExamScheduleRunning,
+		}
+		models.DB.Create(&exam)
+
+		// 节点仍指向已结束的考试
+		models.DB.Model(&node).Update("current_exam_id", exam.ID)
+
+		// 运行清理
+		cleanOrphanData()
+
+		// 验证 current_exam_id 已清空
+		var reloadedNode models.Node
+		models.DB.First(&reloadedNode, node.ID)
+
+		if reloadedNode.CurrentExamID != nil {
+			t.Error("expected current_exam_id to be cleared")
+		}
+	})
 }
 
-func TestCleanupStaleExams_NodeUpdateFailureRollsBackAndRetrySucceeds(t *testing.T) {
-	db := setupCleanupTestDB(t)
-	defer db.Migrator().DropTable(&models.User{}, &models.Room{}, &models.Node{}, &models.Exam{}, &models.Alert{})
+// TestMarkOfflineNodes 测试标记离线节点
+func TestMarkOfflineNodes(t *testing.T) {
+	t.Run("heartbeat_timeout", func(t *testing.T) {
+		cleanup := setupCleanupTestDB(t)
+		defer cleanup()
 
-	user := models.User{Username: "u5", Password: "p", Role: "proctor"}
-	room := models.Room{Name: "r5", Building: "b1", RTSPUrl: "rtsp://x"}
-	if err := db.Create(&user).Error; err != nil {
-		t.Fatalf("create user failed: %v", err)
-	}
-	if err := db.Create(&room).Error; err != nil {
-		t.Fatalf("create room failed: %v", err)
-	}
+		// 创建心跳超时的节点
+		node := seedCleanupNode(t, "timeout-node", models.NodeStatusIdle, time.Now(), time.Now().Add(1*time.Minute))
+		models.DB.Model(&node).Update("last_heartbeat_at", time.Now().Add(-10*time.Minute))
 
-	node := models.Node{
-		Name:            "n5",
-		Token:           "t5",
-		NodeModel:       "m1",
-		Address:         "127.0.0.1:8002",
-		Status:          models.NodeStatusOffline,
-		Version:         "1.0.0",
-		LastHeartbeatAt: time.Now().Add(-5 * time.Minute),
-	}
-	if err := db.Create(&node).Error; err != nil {
-		t.Fatalf("create node failed: %v", err)
-	}
+		// 运行清理
+		markOfflineNodes()
 
-	nodeID := node.ID
-	exam := models.Exam{
-		Name:            "e5",
-		Subject:         "biology",
-		RoomID:          room.ID,
-		NodeID:          &nodeID,
-		UserID:          user.ID,
-		DurationSeconds: 3600,
-		StartTime:       time.Now().Add(-5 * time.Minute),
-		ScheduleStatus:  models.ExamScheduleRunning,
-	}
-	if err := db.Create(&exam).Error; err != nil {
-		t.Fatalf("create exam failed: %v", err)
-	}
+		// 验证节点已标记为离线
+		var reloadedNode models.Node
+		models.DB.First(&reloadedNode, node.ID)
 
-	if err := db.Model(&models.Node{}).
-		Where("id = ?", node.ID).
-		Updates(map[string]any{
-			"current_exam_id":          exam.ID,
-			"current_user_id":          user.ID,
-			"current_user_occupied_at": time.Now().Add(-5 * time.Minute),
-		}).Error; err != nil {
-		t.Fatalf("bind node occupation failed: %v", err)
-	}
+		if reloadedNode.Status != models.NodeStatusOffline {
+			t.Errorf("expected status offline, got %s", reloadedNode.Status)
+		}
+	})
 
-	// 模拟节点更新失败：第一次 cleanup 时，node update 失败应触发事务回滚。
-	if err := db.Exec(`
-		CREATE TRIGGER block_nodes_update_before_retry
-		BEFORE UPDATE ON nodes
-		BEGIN
-			SELECT RAISE(ABORT, 'block node update');
-		END;
-	`).Error; err != nil {
-		t.Fatalf("create trigger failed: %v", err)
-	}
+	t.Run("heartbeat_active", func(t *testing.T) {
+		cleanup := setupCleanupTestDB(t)
+		defer cleanup()
 
-	cleanupStaleExams()
+		// 创建心跳正常的节点
+		node := seedCleanupNode(t, "active-node", models.NodeStatusIdle, time.Now(), time.Now().Add(1*time.Minute))
 
-	var afterFailedTry models.Exam
-	if err := db.First(&afterFailedTry, exam.ID).Error; err != nil {
-		t.Fatalf("reload exam after failed try failed: %v", err)
-	}
-	if afterFailedTry.EndTime != nil {
-		t.Fatal("expected transaction rollback when node update fails")
-	}
+		// 运行清理
+		markOfflineNodes()
 
-	if err := db.Exec("DROP TRIGGER block_nodes_update_before_retry").Error; err != nil {
-		t.Fatalf("drop trigger failed: %v", err)
-	}
+		// 验证节点未变化
+		var reloadedNode models.Node
+		models.DB.First(&reloadedNode, node.ID)
 
-	cleanupStaleExams()
-
-	var afterRetry models.Exam
-	if err := db.First(&afterRetry, exam.ID).Error; err != nil {
-		t.Fatalf("reload exam after retry failed: %v", err)
-	}
-	if afterRetry.EndTime == nil {
-		t.Fatal("expected retry to terminate exam successfully")
-	}
-	if afterRetry.ScheduleError != "由于节点掉线自动终止" {
-		t.Fatalf("expected schedule_error to be offline reason after retry, got %q", afterRetry.ScheduleError)
-	}
-}
-
-func ptrTime(t time.Time) *time.Time {
-	return &t
+		if reloadedNode.Status != models.NodeStatusIdle {
+			t.Errorf("expected status idle, got %s", reloadedNode.Status)
+		}
+	})
 }

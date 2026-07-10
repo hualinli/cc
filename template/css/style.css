@@ -329,6 +329,18 @@
             border: 1px solid rgba(6, 182, 212, 0.3);
         }
 
+        .bg-success {
+            background-color: rgba(34, 197, 94, 0.2);
+            color: #86efac;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+
+        .bg-secondary {
+            background-color: rgba(107, 114, 128, 0.2);
+            color: #d1d5db;
+            border: 1px solid rgba(107, 114, 128, 0.3);
+        }
+
         /* --- 通用组件样式 --- */
         .card {
             background: var(--card-bg);
@@ -875,3 +887,86 @@
             -webkit-backdrop-filter: blur(10px);
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
         }
+/* 分页样式 */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.pagination .page-info {
+    margin-right: 15px;
+    color: #888;
+    font-size: 14px;
+}
+
+.pagination button {
+    padding: 6px 12px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-color);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.pagination button:hover {
+    background: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+}
+
+.pagination button.active {
+    background: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+    cursor: default;
+}
+
+.pagination button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* ── 考试时间选择器 ── */
+.btn-time {
+    padding: 5px 10px;
+    border: 1px solid var(--border-color, #374151);
+    border-radius: 4px;
+    background: #1f2937;
+    color: #d1d5db;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .15s;
+    font-family: inherit;
+    white-space: nowrap;
+}
+.btn-time:hover {
+    border-color: var(--accent-color, #06b6d4);
+    color: #fff;
+    background: rgba(6, 182, 212, 0.1);
+}
+.btn-time.active {
+    background: var(--accent-color, #06b6d4);
+    border-color: var(--accent-color, #06b6d4);
+    color: #0b1120;
+    font-weight: 600;
+}
+.btn-time-now {
+    border-color: #22c55e;
+    color: #22c55e;
+}
+.btn-time-now:hover {
+    background: rgba(34, 197, 94, 0.15);
+    border-color: #22c55e;
+}
+.btn-time-now.active {
+    background: #22c55e;
+    border-color: #22c55e;
+    color: #0b1120;
+    font-weight: 600;
+}
+.btn-time-preset {}

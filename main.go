@@ -6,7 +6,10 @@ import (
 	"cc/models"
 	"cc/tasks"
 	"embed"
+	"flag"
+	"fmt"
 	"io/fs"
+	"os"
 	"net/http"
 	"path/filepath"
 
@@ -63,13 +66,24 @@ func mimeTypeForFile(filePath string) string {
 }
 
 func main() {
-	models.Init()
+	port := flag.Int("port", 8080, "HTTP 服务端口")
+	dbPath := flag.String("db", os.Getenv("CC_DB_PATH"), "SQLite 数据库路径 (默认: cc.db)")
+	flag.Parse()
+
+	if *dbPath == "" {
+		*dbPath = "cc.db"
+	}
+	models.InitWithPath(*dbPath)
 	tasks.StartCleanupTask()
 	tasks.StartExamScheduler()
 	r := gin.Default()
 	templateFS := mustSubFS(embeddedTemplateFS, "template")
 
-	store := cookie.NewStore([]byte("secret-key"))
+	sessionSecret := os.Getenv("SESSION_SECRET")
+	if sessionSecret == "" {
+		sessionSecret = "cc-session-secret-change-me"
+	}
+	store := cookie.NewStore([]byte(sessionSecret))
 	store.Options(sessions.Options{
 		Path:     "/",
 		MaxAge:   3600 * 4, // 4 hours
@@ -140,6 +154,8 @@ func main() {
 		api.GET("/proctor/nodes", handlers.ListNodes)
 		api.POST("/proctor/nodes/:id/jump", handlers.GetNodeJumpURL)
 		api.POST("/proctor/nodes/:id/release", handlers.ReleaseNode)
+		api.GET("/proctor/exams", handlers.ListProctorExams)
+		api.GET("/proctor/exams/stats", handlers.GetProctorExamStats)
 		api.PUT("/users/password", handlers.ChangePassword)
 
 		adminAPI := api.Group("/")
@@ -150,6 +166,7 @@ func main() {
 			adminAPI.GET("/users/:id", handlers.GetUser)
 			adminAPI.POST("/users", handlers.CreateUser)
 			adminAPI.DELETE("/users/:id", handlers.DeleteUser)
+			adminAPI.DELETE("/users/:id/force", handlers.ForceDeleteUser)
 			adminAPI.PUT("/users/:id", handlers.UpdateUser)
 
 			// 教室管理
@@ -199,5 +216,5 @@ func main() {
 		nodeAPI.POST("/alerts", handlers.ReportAlert)
 	}
 
-	r.Run(":8080")
+	r.Run(fmt.Sprintf(":%d", *port))
 }

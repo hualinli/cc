@@ -1,10 +1,6 @@
 package models
 
-import (
-	"time"
-
-	"gorm.io/gorm"
-)
+import "time"
 
 const (
 	NodeStatusIdle    = "idle"
@@ -13,32 +9,45 @@ const (
 	NodeStatusError   = "error"
 )
 
-// Node 监考节点表。
+// Node 监考节点表
 //
-// 设计说明：
-// - Token 用于节点 API 鉴权（相当于机器凭证），必须唯一且保密。
-// - CurrentUserID 是“事实来源”：谁占用了节点由该字段权威决定。
-// - CurrentExamID 是“缓存字段”：用于快查当前考试；权威状态仍以 exams.end_time 是否为 NULL 判断。
-// - LastHeartbeatAt 用于离线检测（cleanup 任务会据此把节点置为 offline）。
+// 设计原则：
+// - 去除数据库外键约束，避免死锁和级联操作的性能开销
+// - CurrentExamID 为业务外键，通过业务逻辑保证一致性
+// - 删除 CurrentUserID 和 CurrentUserOccupiedAt，监考员通过考试间接关联节点
+// - Status 是节点运行状态的唯一来源
+// - 节点分配完全由调度器自动完成，监考员对节点透明
+//
+// 状态转换规则：
+// - idle → busy: 调度器分配考试时
+// - busy → idle: 考试结束时
+// - any → offline: 心跳超时时
+// - any → error: 节点上报错误时
+//
+// 并发安全：
+// - 使用乐观锁更新
+// - 单条 UPDATE 原子操作，避免 SELECT + UPDATE 窗口
 type Node struct {
-	gorm.Model
-	Name          string `gorm:"not null;index" json:"name"`
-	Token         string `gorm:"not null;unique" json:"token"`
-	NodeModel     string `json:"nodemodel"`
-	Address       string `gorm:"index" json:"address"`
-	Status        string `gorm:"not null;index" json:"status"`
-	Version       string `json:"version"`
-	ConfigVersion int    `json:"config_version"`
-	// 当前正在使用的监考员 (NULL 代表没人用)
-	CurrentUserID *uint `gorm:"index" json:"current_user_id"`
-	CurrentUser   *User `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"current_user,omitempty"`
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	CreatedAt time.Time `gorm:"not null" json:"created_at"`
+	UpdatedAt time.Time `gorm:"not null" json:"updated_at"`
 
-	// 用户最后一次占用节点的时间（用于检测节点是否被长期占用但未释放）
-	CurrentUserOccupiedAt *time.Time `json:"current_user_occupied_at"`
+	Name      string `gorm:"not null;index" json:"name"`
+	Token     string `gorm:"not null;unique" json:"token"`
+	NodeModel string `json:"nodemodel"`
+	Address   string `gorm:"index" json:"address"`
+	Status    string `gorm:"not null;index;default:'idle'" json:"status"`
+	Version   string `json:"version"`
 
-	// 当前正在进行的考试 (NULL 代表当前没考试)
+	// 当前考试 ID
 	CurrentExamID *uint `gorm:"index" json:"current_exam_id"`
-	CurrentExam   *Exam `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"current_exam,omitempty"`
 
-	LastHeartbeatAt time.Time `gorm:"autoUpdateTime;index" json:"last_heartbeat_at"`
+	// 心跳时间
+	LastHeartbeatAt time.Time `gorm:"index;not null" json:"last_heartbeat_at"`
+
+	// 租约过期时间 - 用于检测节点掉线
+	LeaseExpiresAt time.Time `gorm:"index;not null" json:"lease_expires_at"`
+
+	// 临时字段，用于在 handler 层传递当前考试数据（不存储到数据库）
+	CurrentExam *Exam `gorm:"-" json:"-"`
 }

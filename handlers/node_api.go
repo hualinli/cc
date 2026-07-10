@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,21 +35,23 @@ func NodeHeartbeat(c *gin.Context) {
 		return
 	}
 
-	var input struct {
-		Status  string         `json:"status"`
-		Details map[string]any `json:"details"`
+	var rawInput struct {
+		Status      string         `json:"status"`
+		Details     map[string]any `json:"details"`
+		Port        any            `json:"port"`        // 兼容 int/string/null（旧节点）
+		NodeAddress string         `json:"node_address"` // 节点自报地址（如 192.168.1.100:8002）
 	}
 
-	if err := c.ShouldBindJSON(&input); err != nil {
+	if err := c.ShouldBindJSON(&rawInput); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "请求参数错误",
+			"error":   "请求参数错误: " + err.Error(),
 		})
 		return
 	}
 
-	if input.Status != "" {
-		switch input.Status {
+	if rawInput.Status != "" {
+		switch rawInput.Status {
 		case models.NodeStatusIdle, models.NodeStatusBusy, models.NodeStatusError:
 		default:
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -70,9 +73,16 @@ func NodeHeartbeat(c *gin.Context) {
 	}
 
 	// 更新数据库状态
-	reportedAddress := c.ClientIP() + ":8002"
+	now := time.Now()
+	// 优先使用节点自报地址，兼容旧节点：port 字段 + 源 IP 作为兜底
+	reportedAddress := strings.TrimSpace(rawInput.NodeAddress)
+	if reportedAddress == "" {
+		port := parsePort(rawInput.Port)
+		reportedAddress = fmt.Sprintf("%s:%d", c.ClientIP(), port)
+	}
 	updateData := map[string]any{
-		"last_heartbeat_at": time.Now(),
+		"last_heartbeat_at": now,
+		"lease_expires_at":  now.Add(2 * time.Minute), // 租约 2 分钟
 	}
 	if node.Address != reportedAddress {
 		updateData["address"] = reportedAddress // 心跳时按需更新节点地址，减少无效写入
@@ -80,15 +90,15 @@ func NodeHeartbeat(c *gin.Context) {
 
 	// 心跳仅接收节点运行态（idle/busy/error）。
 	// offline 由 cleanup 根据超时统一写入，避免节点自行宣告离线。
-	if input.Status != "" {
-		switch input.Status {
+	if rawInput.Status != "" {
+		switch rawInput.Status {
 		case models.NodeStatusIdle:
 			// 节点上报 idle：仅更新 node 侧状态与占用字段。
 			// 其他表的收敛（如自动关考）交由 cleanup 任务统一处理。
 			clearNodeOccupation(updateData)
 			setNodeStatusIfChanged(updateData, node.Status, models.NodeStatusIdle)
 		case models.NodeStatusBusy:
-			setNodeStatusIfChanged(updateData, node.Status, input.Status)
+			setNodeStatusIfChanged(updateData, node.Status, rawInput.Status)
 		case models.NodeStatusError:
 			clearNodeOccupation(updateData)
 			setNodeStatusIfChanged(updateData, node.Status, models.NodeStatusError)
@@ -135,6 +145,7 @@ func SyncTask(c *gin.Context) {
 		DurationMinutes int       `json:"duration_minutes"` // 考试时长（分钟）
 		ExamID          uint      `json:"exam_id"`
 		ExamineeCount   int       `json:"examinee_count"`
+		UserID          uint      `json:"user_id"` // 可选，监考员ID
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -190,6 +201,14 @@ func SyncTask(c *gin.Context) {
 				return
 			}
 
+			// 刷新节点租约，确保节点状态与考试一致
+			now := time.Now()
+			models.DB.Model(&models.Node{}).Where("id = ?", nodeIDUint).Updates(map[string]any{
+				"lease_expires_at": now.Add(2 * time.Minute),
+				"status":           models.NodeStatusBusy,
+				"current_exam_id":  input.ExamID,
+			})
+
 			c.JSON(http.StatusOK, gin.H{"success": true, "exam_id": exam.ID})
 			return
 		}
@@ -218,10 +237,6 @@ func SyncTask(c *gin.Context) {
 			if err := tx.First(&currentNode, nodeIDUint).Error; err != nil {
 				return err
 			}
-			if currentNode.CurrentUserID == nil {
-				return fmt.Errorf("节点未被任何监考员占用")
-			}
-
 			// 节点重复上报 start（但未携带 exam_id）时，返回当前进行中的考试，避免重复创建。
 			var activeExam models.Exam
 			activeExamErr := tx.Where("node_id = ? AND end_time IS NULL", nodeIDUint).
@@ -232,16 +247,27 @@ func SyncTask(c *gin.Context) {
 				return activeExamErr
 			}
 			if activeExam.ID != 0 {
-				now := time.Now()
 				if err := tx.Model(&currentNode).Updates(map[string]any{
-					"current_exam_id":          activeExam.ID,
-					"current_user_occupied_at": now,
-					"status":                   models.NodeStatusBusy,
+					"current_exam_id": activeExam.ID,
+					"status":          models.NodeStatusBusy,
 				}).Error; err != nil {
 					return err
 				}
 				responseExamID = activeExam.ID
 				return nil
+			}
+
+			userID := input.UserID
+			if userID == 0 {
+				// 未指定 user_id 时，尝试查找一个可用的监考员
+				var defaultUser models.User
+				if err := tx.Where("role = ? AND status = ?", models.Proctor, models.UserStatusActive).
+					Order("id ASC").Limit(1).First(&defaultUser).Error; err == nil {
+					userID = defaultUser.ID
+				}
+			}
+			if userID == 0 {
+				return fmt.Errorf("未指定 user_id 且没有可用的监考员")
 			}
 
 			nodeIDPtr := nodeIDUint
@@ -250,7 +276,7 @@ func SyncTask(c *gin.Context) {
 				Subject:         input.Subject,
 				RoomID:          input.RoomID,
 				NodeID:          &nodeIDPtr,
-				UserID:          *currentNode.CurrentUserID,
+				UserID:          userID,
 				DurationSeconds: input.DurationMinutes * 60,
 				StartTime:       input.StartTime,
 				EndTime:         nil,
@@ -261,11 +287,9 @@ func SyncTask(c *gin.Context) {
 				return err
 			}
 
-			now := time.Now()
 			if err := tx.Model(&currentNode).Updates(map[string]any{
-				"current_exam_id":          exam.ID,
-				"current_user_occupied_at": now,
-				"status":                   models.NodeStatusBusy,
+				"current_exam_id": exam.ID,
+				"status":          models.NodeStatusBusy,
 			}).Error; err != nil {
 				return err
 			}
@@ -333,10 +357,8 @@ func SyncTask(c *gin.Context) {
 			nodeResult := tx.Model(&models.Node{}).
 				Where("id = ? AND current_exam_id = ?", nodeIDUint, input.ExamID).
 				Updates(map[string]any{
-					"current_exam_id":          nil,
-					"current_user_id":          nil,
-					"current_user_occupied_at": nil,
-					"status":                   models.NodeStatusIdle,
+					"current_exam_id": nil,
+					"status":          models.NodeStatusIdle,
 				})
 			if nodeResult.Error != nil {
 				return nodeResult.Error
@@ -558,7 +580,7 @@ func ReportAlert(c *gin.Context) {
 
 	alert := models.Alert{
 		ExamID:      input.ExamID,
-		Type:        models.AlertType(input.Type),
+		Type:        input.Type,
 		SeatNumber:  input.SeatNumber,
 		X:           input.X,
 		Y:           input.Y,
@@ -606,8 +628,24 @@ func setNodeStatusIfChanged(updateData map[string]any, currentStatus string, tar
 
 func clearNodeOccupation(updateData map[string]any) {
 	updateData["current_exam_id"] = nil
-	updateData["current_user_id"] = nil
-	updateData["current_user_occupied_at"] = nil
+}
+
+// parsePort 解析端口号，兼容 JSON 中的整数（float64）、字符串。
+// 无效或越界时返回默认值 8002。
+func parsePort(v any) int {
+	switch val := v.(type) {
+	case float64:
+		// JSON 数字默认解析为 float64
+		port := int(val)
+		if port > 0 && port <= 65535 {
+			return port
+		}
+	case string:
+		if port, err := strconv.Atoi(val); err == nil && port > 0 && port <= 65535 {
+			return port
+		}
+	}
+	return 8002 // 默认端口
 }
 
 func mapSyncTaskStartErrorStatus(errMsg string) int {

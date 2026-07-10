@@ -35,6 +35,15 @@ func LoginPostHandler(c *gin.Context) {
 		return
 	}
 
+	// 检查用户状态
+	if user.Status == models.UserStatusDisabled {
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"error":   "账户已被禁用，请联系管理员",
+		})
+		return
+	}
+
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,

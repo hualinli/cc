@@ -174,7 +174,7 @@ func TestGetAlerts_Success(t *testing.T) {
 	room := seedAlertRoom(t)
 	user := seedAlertUser(t)
 	exam := seedAlertExam(t, room.ID, user.ID)
-	alert := models.Alert{ExamID: exam.ID, Type: models.AlertTypePhoneCheating, SeatNumber: "B2", Message: "hello", CreatedAt: time.Now()}
+	alert := models.Alert{ExamID: exam.ID, Type: "phone_cheating", SeatNumber: "B2", Message: "hello", CreatedAt: time.Now()}
 	if err := models.DB.Create(&alert).Error; err != nil {
 		t.Fatalf("failed to create alert: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestUpdateAlert_Success(t *testing.T) {
 	user := seedAlertUser(t)
 	exam1 := seedAlertExam(t, room.ID, user.ID)
 	exam2 := seedAlertExam(t, room.ID, user.ID)
-	alert := models.Alert{ExamID: exam1.ID, Type: models.AlertTypeLookAround, SeatNumber: "C3", Message: "before", CreatedAt: time.Now()}
+	alert := models.Alert{ExamID: exam1.ID, Type: "look_around", SeatNumber: "C3", Message: "before", CreatedAt: time.Now()}
 	if err := models.DB.Create(&alert).Error; err != nil {
 		t.Fatalf("failed to create alert: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestUpdateAlert_InvalidExamID(t *testing.T) {
 	room := seedAlertRoom(t)
 	user := seedAlertUser(t)
 	exam := seedAlertExam(t, room.ID, user.ID)
-	alert := models.Alert{ExamID: exam.ID, Type: models.AlertTypeOther, SeatNumber: "D4", CreatedAt: time.Now()}
+	alert := models.Alert{ExamID: exam.ID, Type: "other", SeatNumber: "D4", CreatedAt: time.Now()}
 	if err := models.DB.Create(&alert).Error; err != nil {
 		t.Fatalf("failed to create alert: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestDeleteAlert_Success(t *testing.T) {
 	room := seedAlertRoom(t)
 	user := seedAlertUser(t)
 	exam := seedAlertExam(t, room.ID, user.ID)
-	alert := models.Alert{ExamID: exam.ID, Type: models.AlertTypeStandUp, CreatedAt: time.Now()}
+	alert := models.Alert{ExamID: exam.ID, Type: "stand_up", CreatedAt: time.Now()}
 	if err := models.DB.Create(&alert).Error; err != nil {
 		t.Fatalf("failed to create alert: %v", err)
 	}
@@ -312,8 +312,8 @@ func TestListAlerts_FilterByType(t *testing.T) {
 	user := seedAlertUser(t)
 	exam := seedAlertExam(t, room.ID, user.ID)
 	alerts := []models.Alert{
-		{ExamID: exam.ID, Type: models.AlertTypePhoneCheating, SeatNumber: "A1", CreatedAt: time.Now()},
-		{ExamID: exam.ID, Type: models.AlertTypeWhispering, SeatNumber: "A2", CreatedAt: time.Now()},
+		{ExamID: exam.ID, Type: "phone_cheating", SeatNumber: "A1", CreatedAt: time.Now()},
+		{ExamID: exam.ID, Type: "whispering", SeatNumber: "A2", CreatedAt: time.Now()},
 	}
 	if err := models.DB.Create(&alerts).Error; err != nil {
 		t.Fatalf("failed to create alerts: %v", err)

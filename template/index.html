@@ -249,12 +249,14 @@
                             <th>序号</th>
                             <th>用户名</th>
                             <th>角色</th>
+                            <th>状态</th>
                             <th>创建时间</th>
                             <th>操作</th>
                         </tr>
                     </thead>
                     <tbody id="user-list-body"></tbody>
                 </table>
+                <div id="user-pagination" style="margin-top: 20px;"></div>
             </div>
         </div>
 
@@ -311,6 +313,7 @@
                     </thead>
                     <tbody id="node-list-body"></tbody>
                 </table>
+                <div id="node-pagination" style="margin-top: 16px;"></div>
             </div>
         </div>
 
@@ -351,6 +354,7 @@
                     </thead>
                     <tbody id="classroom-list-body"></tbody>
                 </table>
+                <div id="room-pagination" style="margin-top: 20px;"></div>
             </div>
         </div>
 
@@ -487,8 +491,20 @@
                 <input type="text" id="modalExamSubject" placeholder="请输入考试科目">
             </div>
             <div class="form-row">
+                <label>考试日期</label>
+                <input type="date" id="modalExamDate" style="font-size: 14px;">
+            </div>
+            <div class="form-row">
                 <label>开始时间 *</label>
-                <input type="datetime-local" id="modalExamStartTime" step="60">
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px;" id="timePresets">
+                    <!-- JS 动态填充 -->
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="time" id="modalExamTime" step="60" style="flex: 1; font-size: 14px;">
+                    <span style="font-size: 11px; color: var(--text-muted); white-space: nowrap;">HH:MM</span>
+                </div>
+                <div id="modalExamTimePreview" style="margin-top: 8px; padding: 8px 12px; background: rgba(34,211,238,.08); border-radius: 4px; font-size: 13px; color: var(--accent-color); text-align: center; font-weight: 600;">
+                </div>
             </div>
             <div class="form-row">
                 <label>时长（分钟）*</label>

@@ -9,6 +9,7 @@ type userPayload struct {
 	ID        uint      `json:"id"`
 	Username  string    `json:"username"`
 	Role      string    `json:"role"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -33,21 +34,18 @@ type nodeExamPayload struct {
 }
 
 type nodePayload struct {
-	ID                    uint             `json:"id"`
-	Name                  string           `json:"name"`
-	Token                 string           `json:"token"`
-	NodeModel             string           `json:"nodemodel"`
-	Address               string           `json:"address"`
-	Status                string           `json:"status"`
-	Version               string           `json:"version"`
-	ConfigVersion         int              `json:"config_version"`
-	CurrentUserID         *uint            `json:"current_user_id"`
-	CurrentUserOccupiedAt *time.Time       `json:"current_user_occupied_at"`
-	CurrentExamID         *uint            `json:"current_exam_id"`
-	CurrentExam           *nodeExamPayload `json:"current_exam,omitempty"`
-	LastHeartbeatAt       time.Time        `json:"last_heartbeat_at"`
-	CreatedAt             time.Time        `json:"created_at"`
-	UpdatedAt             time.Time        `json:"updated_at"`
+	ID              uint             `json:"id"`
+	Name            string           `json:"name"`
+	Token           string           `json:"token"`
+	NodeModel       string           `json:"nodemodel"`
+	Address         string           `json:"address"`
+	Status          string           `json:"status"`
+	Version         string           `json:"version"`
+	CurrentExamID   *uint            `json:"current_exam_id"`
+	CurrentExam     *nodeExamPayload `json:"current_exam,omitempty"`
+	LastHeartbeatAt time.Time        `json:"last_heartbeat_at"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
 }
 
 type examPayload struct {
@@ -76,6 +74,7 @@ func toUserPayload(u models.User) userPayload {
 		ID:        u.ID,
 		Username:  u.Username,
 		Role:      string(u.Role),
+		Status:    u.Status,
 		CreatedAt: u.CreatedAt,
 		UpdatedAt: u.UpdatedAt,
 	}
@@ -96,20 +95,17 @@ func toRoomPayload(r models.Room) roomPayload {
 
 func toNodePayload(n models.Node) nodePayload {
 	return nodePayload{
-		ID:                    n.ID,
-		Name:                  n.Name,
-		Token:                 n.Token,
-		NodeModel:             n.NodeModel,
-		Address:               n.Address,
-		Status:                n.Status,
-		Version:               n.Version,
-		ConfigVersion:         n.ConfigVersion,
-		CurrentUserID:         n.CurrentUserID,
-		CurrentUserOccupiedAt: n.CurrentUserOccupiedAt,
-		CurrentExamID:         n.CurrentExamID,
-		LastHeartbeatAt:       n.LastHeartbeatAt,
-		CreatedAt:             n.CreatedAt,
-		UpdatedAt:             n.UpdatedAt,
+		ID:              n.ID,
+		Name:            n.Name,
+		Token:           n.Token,
+		NodeModel:       n.NodeModel,
+		Address:         n.Address,
+		Status:          n.Status,
+		Version:         n.Version,
+		CurrentExamID:   n.CurrentExamID,
+		LastHeartbeatAt: n.LastHeartbeatAt,
+		CreatedAt:       n.CreatedAt,
+		UpdatedAt:       n.UpdatedAt,
 	}
 }
 
@@ -121,6 +117,7 @@ func toNodeExamPayload(e models.Exam) nodeExamPayload {
 		EndTime:   e.EndTime,
 	}
 
+	// 如果已加载 Room，转换为 payload
 	if e.Room != nil {
 		room := toRoomPayload(*e.Room)
 		payload.Room = &room
@@ -131,6 +128,7 @@ func toNodeExamPayload(e models.Exam) nodeExamPayload {
 
 func toNodePayloadWithExam(n models.Node) nodePayload {
 	payload := toNodePayload(n)
+	// 如果已加载 CurrentExam，转换为 payload
 	// 仅在节点非 offline 且当前考试仍在进行时，才返回当前考试摘要，避免展示已结束或脏数据。
 	if n.CurrentExam != nil {
 		if n.CurrentExam.EndTime == nil && n.Status != "offline" {
@@ -160,18 +158,19 @@ func toExamPayload(e models.Exam) examPayload {
 		UpdatedAt:       e.UpdatedAt,
 	}
 
-	if e.Room != nil {
-		room := toRoomPayload(*e.Room)
-		payload.Room = &room
-	}
-	if e.Node != nil {
-		node := toNodePayload(*e.Node)
-		payload.Node = &node
-	}
-	if e.User != nil {
-		user := toUserPayload(*e.User)
-		payload.User = &user
-	}
+	// 如果已加载关联数据，转换为 payload
+if e.Room != nil {
+	room := toRoomPayload(*e.Room)
+	payload.Room = &room
+}
+if e.Node != nil {
+	node := toNodePayload(*e.Node)
+	payload.Node = &node
+}
+if e.User != nil {
+	user := toUserPayload(*e.User)
+	payload.User = &user
+}
 
 	return payload
 }

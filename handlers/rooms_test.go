@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"cc/models"
+	"fmt"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -530,6 +531,141 @@ func TestDeleteRoom(t *testing.T) {
 
 			if tc.verify != nil {
 				tc.verify(t)
+			}
+		})
+	}
+}
+
+// TestListRoomsPagination 测试教室列表分页
+func TestListRoomsPagination(t *testing.T) {
+	cleanup := setupRoomsHandlerTestDB(t)
+	defer cleanup()
+
+	// 创建 30 个教室用于测试分页
+	for i := 1; i <= 30; i++ {
+		room := models.Room{
+			Name:     fmt.Sprintf("Room%02d", i),
+			Building: fmt.Sprintf("Building%d", (i-1)/10+1),
+			RTSPUrl:  fmt.Sprintf("rtsp://192.168.1.%d:554/stream", i),
+		}
+		if err := models.DB.Create(&room).Error; err != nil {
+			t.Fatalf("failed to create room: %v", err)
+		}
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.GET("/rooms", ListRooms)
+
+	testCases := []struct {
+		name            string
+		query           string
+		expectedCode    int
+		expectedPage    int
+		expectedSize    int
+		expectedTotal   int64
+		expectedPages   int64
+		expectedDataLen int
+	}{
+		{
+			name:            "default pagination",
+			query:           "",
+			expectedCode:    http.StatusOK,
+			expectedPage:    1,
+			expectedSize:    20,
+			expectedTotal:   30,
+			expectedPages:   2,
+			expectedDataLen: 20,
+		},
+		{
+			name:            "page 2",
+			query:           "?page=2&page_size=20",
+			expectedCode:    http.StatusOK,
+			expectedPage:    2,
+			expectedSize:    20,
+			expectedTotal:   30,
+			expectedPages:   2,
+			expectedDataLen: 10,
+		},
+		{
+			name:            "custom page size",
+			query:           "?page=1&page_size=15",
+			expectedCode:    http.StatusOK,
+			expectedPage:    1,
+			expectedSize:    15,
+			expectedTotal:   30,
+			expectedPages:   2,
+			expectedDataLen: 15,
+		},
+		{
+			name:            "page size 200 within limit",
+			query:           "?page=1&page_size=200",
+			expectedCode:    http.StatusOK,
+			expectedPage:    1,
+			expectedSize:    200,
+			expectedTotal:   30,
+			expectedPages:   1,
+			expectedDataLen: 30,
+		},
+		{
+			name:            "invalid page",
+			query:           "?page=-1",
+			expectedCode:    http.StatusOK,
+			expectedPage:    1, // 应该被修正为 1
+			expectedSize:    20,
+			expectedTotal:   30,
+			expectedPages:   2,
+			expectedDataLen: 20,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/rooms"+tc.query, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			if w.Code != tc.expectedCode {
+				t.Fatalf("expected status %d, got %d", tc.expectedCode, w.Code)
+			}
+
+			var resp struct {
+				Success    bool          `json:"success"`
+				Data       []interface{} `json:"data"`
+				Pagination struct {
+					Page      int   `json:"page"`
+					PageSize  int   `json:"page_size"`
+					Total     int64 `json:"total"`
+					TotalPage int64 `json:"total_page"`
+				} `json:"pagination"`
+			}
+
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to unmarshal response: %v", err)
+			}
+
+			if !resp.Success {
+				t.Fatalf("expected success=true, got false")
+			}
+
+			if len(resp.Data) != tc.expectedDataLen {
+				t.Fatalf("expected %d rooms, got %d", tc.expectedDataLen, len(resp.Data))
+			}
+
+			if resp.Pagination.Page != tc.expectedPage {
+				t.Fatalf("expected page %d, got %d", tc.expectedPage, resp.Pagination.Page)
+			}
+
+			if resp.Pagination.PageSize != tc.expectedSize {
+				t.Fatalf("expected page_size %d, got %d", tc.expectedSize, resp.Pagination.PageSize)
+			}
+
+			if resp.Pagination.Total != tc.expectedTotal {
+				t.Fatalf("expected total %d, got %d", tc.expectedTotal, resp.Pagination.Total)
+			}
+
+			if resp.Pagination.TotalPage != tc.expectedPages {
+				t.Fatalf("expected total_page %d, got %d", tc.expectedPages, resp.Pagination.TotalPage)
 			}
 		})
 	}
